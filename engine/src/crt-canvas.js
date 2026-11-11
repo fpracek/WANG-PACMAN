@@ -35,6 +35,10 @@ return function render(T,blinkOn){
       }
     }
   }
+  // cursore (se acceso): blocco lampeggiante sotto il carattere
+  if(T.cursorVisible && blinkOn){
+    for(let p=7;p<11;p++) for(let x=0;x<9;x++){ const o=(T.cy*CH+p*2)*W+T.cx*CW+x; lum[o]=1; lum[o+W]=1; }
+  }
   // riquadri (BOX) a intensità normale
   const line=(x0,x1,y0,y1)=>{ for(let y=y0;y<y1&&y<H;y++) for(let x=x0;x<x1&&x<W;x++){ const o=y*W+x; if(lum[o]<0.6) lum[o]=0.6; } };
   for(let r=0;r<=ROWS;r++) for(let c=0;c<COLS;c++){

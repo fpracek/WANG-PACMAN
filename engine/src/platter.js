@@ -12,7 +12,8 @@ class Platter {
     this.label=label; this.readOnly=!!opts.readOnly; this.files=new Map(); this.version=0;
   }
   addProgram(name,text){ this.files.set(name,{name,kind:'program',text}); this.version++; return this; }
-  putData(name,records){ this.files.set(name,{name,kind:'data',records:records.slice()}); this.version++; }
+  putData(name,records){ this.files.set(name,{name,kind:'data',records:records.slice(),user:true}); this.version++; }
+  putProgram(name,text){ this.files.set(name,{name,kind:'program',text,user:true}); this.version++; }   // salvato dall'utente: persiste
   has(name){ return this.files.has(name); }
   get(name){ return this.files.get(name)||null; }
   remove(name){ const r=this.files.delete(name); if(r) this.version++; return r; }
@@ -53,11 +54,11 @@ class DiskSystem {
     if(!p) throw new Error('nessun platter'); if(p.readOnly) throw new Error('platter protetto da scrittura');
     p.putData(name,records); this.persist();
   }
-  /* persistenza: salva solo i file dati (kind 'data') di ogni platter */
+  /* persistenza: salva solo i file creati dall'utente (user:true) di ogni platter */
   persist(){
     if(!this.storage) return;
     try{ for(const [addr,p] of this.drives){
-      const files=[...p.files.values()].filter(f=>f.kind==='data');     // solo i dati utente: i listati arrivano dal codice
+      const files=[...p.files.values()].filter(f=>f.user);              // solo i file dell'utente: i listati forniti dal codice no
       this.storage.setItem(this.prefix+':'+addr, JSON.stringify({label:p.label,files}));
     } }catch(e){}
   }
@@ -65,9 +66,15 @@ class DiskSystem {
   restore(){
     if(!this.storage) return;
     for(const [addr,p] of this.drives){
-      try{ const j=JSON.parse(this.storage.getItem(this.prefix+':'+addr)||'null'); if(j) for(const f of j.files) if(f.kind==='data') p.files.set(f.name,f); }catch(e){}
+      try{ const j=JSON.parse(this.storage.getItem(this.prefix+':'+addr)||'null'); if(j) for(const f of j.files) if(f.user) p.files.set(f.name,f); }catch(e){}
     }
   }
+  writeProgram(name,text,addr){
+    const f=this.find(name); const p=f ? f.platter : this.drives.get(addr||this.current);
+    if(!p) throw new Error('nessun platter'); if(p.readOnly) throw new Error('platter protetto da scrittura');
+    p.putProgram(name,text); this.persist();
+  }
+  remove(name){ const f=this.find(name); if(!f) return false; if(f.platter.readOnly) throw new Error('platter protetto da scrittura'); f.platter.remove(name); this.persist(); return true; }
   /* esporta/importa un platter come stringa JSON (per scaricare/caricare "dischi") */
   exportPlatter(addr){ return JSON.stringify(this.drives.get(addr).toJSON()); }
   importPlatter(addr,json){ this.mount(addr,Platter.fromJSON(JSON.parse(json))); this.persist(); }

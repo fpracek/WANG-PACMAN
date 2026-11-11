@@ -1,98 +1,110 @@
 # BASIC2-JS
 
-Interprete **Wang BASIC-2** in JavaScript puro, pensato per girare nel browser (e in Node per i test),
-con **platter** (dischi virtuali) e un terminale Wang 2236 emulato. Nato per eseguire i listati originali
-senza riscriverli: il primo client è `UNS-MAN` (clone di Pac-Man di Steve McGarry, 1981; il listato non è incluso), che gira
-**così com'è**, senza modifiche al sorgente BASIC (solo due "patch" opzionali per righe che toccano l'hardware).
+A **Wang BASIC-2** interpreter in plain JavaScript for the browser (and Node, for tests), with **platters**
+(virtual disks), an emulated Wang 2236 terminal and an interactive BASIC-2 prompt. It was built to run original
+listings unchanged: the first client is `UNS-MAN` (Steve McGarry's 1981 Pac-Man clone; the listing is not included),
+which runs **as is**, with only two optional patches for lines that touch hardware.
 
-## Architettura
+## Architecture
 
 ```
 src/
-  basic2.js     linguaggio: Parser (testo -> AST) + Interp (esecuzione, variabili, FOR/GOSUB, I/O)
-  platter.js    Platter (un disco con file) + DiskSystem (unità montate, ricerca, persistenza)
-  wangcrt.js    Terminal: modello dello schermo 80x24 con i byte di controllo del 2236 (nessun DOM)
-  crt-canvas.js createCrtRenderer(canvas): disegno con il font reale + effetto fosforo
-  font.js       tabelle del character generator (da WangEmu, MIT)
-test/           prove in Node: parser sui listati, esecuzione, classifica su platter, tasti
+  basic2.js     the language: Parser (text -> AST) + Interp (execution, variables, FOR/GOSUB, I/O, run outcomes)
+  platter.js    Platter (a disk with files) + DiskSystem (mounted drives, lookup, persistence)
+  wangcrt.js    Terminal: 80x24 screen model with the 2236 control bytes (no DOM)
+  crt-canvas.js createCrtRenderer(canvas): drawing with the real font + phosphor effect, blinking cursor
+  shell.js      Workstation: the interactive BASIC-2 prompt (enter lines, LIST, RUN, LOAD/SAVE, CATALOG, ...)
+  font.js       character-generator tables (from WangEmu, MIT)
+test/           Node tests: prompt, parser on listings, execution, Hall of Fame on a platter, key handling
 ```
 
-Il motore **non conosce il DOM**: parla con tre dispositivi che si passano al costruttore.
+The engine does **not know the DOM**: it talks to three devices passed to the constructor.
 
 ```js
 const interp = new Interp(term, io, disk);
-interp.start('UNS-MAN');        // carica il programma dal disco e lo esegue
-interp.reset();                 // ferma (RESET)
+interp.start('UNS-MAN');                 // "game mode": load a program from disk and run it
+const ws = new Workstation(term, io, disk);
+ws.main();                               // "workstation mode": the BASIC-2 prompt
 ```
 
-| Dispositivo | Contratto |
+| Device | Contract |
 |---|---|
 | `term` (CRT) | `out(byte)`, `at(r,c)`, `atClear(r,c,n)`, `drawBox(r,c,h,w,draw)`, `cx/cy/cols`, `clear()`, `hex(str)`, `print(str)` |
-| `io` (tastiera) | `poll()` -> `{c,sp}` o `null` (non blocca); `next()` -> `Promise<{c,sp}>`. `sp:true` = tasto speciale (frecce) |
-| `disk` | `DiskSystem`: `readProgram(nome)`, `readData(nome)`, `writeData(nome,record)`, `status(nome)`, `restore()` |
+| `io` (keyboard) | `poll()` -> `{c,sp}` or `null` (non-blocking); `next()` -> `Promise<{c,sp}>`; optional `abort()`. `sp:true` marks special keys (cursors) |
+| `disk` | `DiskSystem`: `readProgram`, `writeProgram`, `readData`, `writeData`, `remove`, `status`, `restore` |
 
-### Platter
+### Run outcomes
 
-Un `Platter` è un disco con file di due tipi: `program` (listato testuale, una riga BASIC per riga) e
-`data` (record per `DATA LOAD DC` / `DATA SAVE DC`). `DiskSystem` monta i platter agli indirizzi stile Wang
-(`'310'`, `'320'`, ...), tiene l'unità corrente e cerca i file prima lì e poi nelle altre.
-La persistenza usa `localStorage` **solo per i file dati** (i listati arrivano sempre dal codice) e degrada
-a "solo memoria" dove `localStorage` non è disponibile (iframe sandbox, URL `data:`). Un platter si può
-esportare/importare come JSON (`exportPlatter` / `importPlatter`).
+`interp.run()` resolves to `{status, line, msg}` where `status` is `end`, `stop` (a `STOP` statement; `CONTINUE`
+resumes), `halt` (user interruption via `interp.halt()`), `error` or `reset`. Direct statements (without a line
+number) run with `interp.execDirect(src)` and share variables with the program.
+
+### Platters
+
+A `Platter` is a disk with two kinds of file: `program` (a text listing, one BASIC line per line, non-printable bytes as
+`\xHH`) and `data` (records for `DATA LOAD DC` / `DATA SAVE DC`). `DiskSystem` mounts platters at Wang-style addresses
+(`'310'`, `'320'`, ...), keeps a current drive and searches it first. Persistence uses `localStorage` for **user-created
+files only** and degrades to memory-only where it is unavailable (sandboxed iframes, `data:` URLs).
 
 ```js
-const disk = new DiskSystem({prefix: 'miodisco'});
-const p = disk.mount('310', new Platter('GIOCHI'));
-p.addProgram('UNS-MAN', testoDelListato);
+const disk = new DiskSystem({prefix: 'mydisk'});
+const p = disk.mount('310', new Platter('GAMES'));
+p.addProgram('UNS-MAN', listingText);
 ```
 
-## Il dialetto: cosa è implementato
+### The prompt
 
-Istruzioni: `REM` (e `%`), `DIM`, `COM`, `LET` implicito (anche multiplo `A,B=0`, `STR(..)=`),
-`IF..THEN..ELSE`, `FOR/NEXT [STEP]`, `GOTO`, `GOSUB`/`RETURN [CLEAR [ALL]]`, `ON..GOTO/GOSUB`, `DEFFN'n` + `GOSUB 'n(..)`,
-`DATA`/`READ`/`RESTORE [LINE n]`, `MAT ZER/CON/copia/READ`, `PRINT` (`AT`, `AT(r,c,n)`, `TAB`, `BOX`, `HEX`, `;`),
-`PRINTUSING`, `KEYIN`, `LINPUT`, `CONVERT`, `LOAD T"nome"` (concatenamento con variabili `COM`), `LIMITS`,
-`DATA LOAD/SAVE DC` (su platter), `SELECT`, `STOP`, `$GIO/005`, `$BREAK`, `$TRAN`.
-Funzioni: `INT MOD MIN MAX ABS RND SGN LEN POS STR HEX ALL BIN ADDC`, operatori `+ - * / ^ &`, relazionali, `AND OR`.
+Type numbered lines to build a program (a number alone deletes the line). Commands: `LIST [a[,b]]`, `RUN [n]`,
+`CONTINUE`, `NEW`, `CLEAR [P]`, `LOAD [RUN] "name"`, `SAVE "name"`, `SCRATCH "name"`, `CATALOG [disk]`,
+`SELECT DISK n`, `DELETE a[,b]`, `HELP`. Anything else is a direct statement (`PRINT 2+3*4`, `A=5`, `PRINT A`).
+Up/down arrows recall the command history; `ws.halt()` interrupts a running program.
 
-Punti di semantica che contano (scoperti sui listati reali):
+## Dialect coverage
 
-- **`IF..THEN` governa UNA sola istruzione**; le istruzioni dopo i due punti girano sempre. `: ELSE ...` appartiene all'IF.
-- **Stringhe a lunghezza fissa** (riempite di spazi, 16 se non dichiarate); `STR(v,a,n)` vale come valore e come destinazione;
-  i confronti riempiono la stringa più corta con spazi; `ALL(hh)` riempie, `HEX(..)` dà byte.
-- **`KEYIN K$`** senza numeri di riga **attende** un tasto. **`KEYIN K$,l1,l2`** non blocca: senza tasto `K$` resta
-  invariato; con un tasto normale salta a `l1`, con un tasto speciale (cursori) a `l2` (con `l1` = la riga stessa si svuota il buffer).
-- Il listato è **senza spazi** (`IF X1(G)<>XOR Y1(G)<>YTHEN`): il parser lavora sul testo grezzo e decide per contesto
-  se `XOR` è `X OR`. Le variabili sono lettera+cifra+`$`.
-- Numeri stampati come `" 12 "` (segno e spazio finale): `PRINT H0;HEX(08)` cancella lo spazio finale.
-- `PRINT` senza `;` finale emette `CR LF` (il CR spegne l'attributo temporaneo `HEX(0E)`); a fine schermo lo `LF` scorre.
-- **Tempo virtuale**: ogni istruzione e ogni byte al terminale costano microsecondi (`stmtCost`, `byteCost`, `breakCost`,
-  moltiplicati da `speed`); l'esecuzione viene rallentata in proporzione. Il ritmo di molti giochi dipendeva solo dalla
-  lentezza del 2200, quindi è regolabile. `SELECT P1` = uscita lenta (animazioni).
+Statements: `REM` (and `%`), `DIM`, `COM`, implicit `LET` (also multiple `A,B=0` and `STR(..)=`), `IF..THEN..ELSE`,
+`FOR/NEXT [STEP]`, `GOTO`, `GOSUB`/`RETURN [CLEAR [ALL]]`, `ON..GOTO/GOSUB`, `DEFFN'n` + `GOSUB 'n(..)`,
+`DATA`/`READ`/`RESTORE [LINE n]`, `MAT ZER/CON/copy/READ`, `PRINT` (`AT`, `AT(r,c,n)`, `TAB`, `BOX`, `HEX`, `;`),
+`PRINTUSING`, `KEYIN`, `LINPUT`, `CONVERT`, `LOAD T"name"` (chaining with `COM` variables), `LIMITS`,
+`DATA LOAD/SAVE DC` (on platters), `SELECT`, `STOP`, `$GIO/005`, `$BREAK`, `$TRAN`.
+Functions: `INT MOD MIN MAX ABS RND SGN LEN SQR EXP LOG SIN COS TAN ATN POS STR HEX ALL BIN ADDC`; operators
+`+ - * / ^ &`, relational, `AND OR`.
 
-## Cosa manca per un emulatore BASIC-2 completo (roadmap)
+Semantics that matter (found on real listings):
 
-1. **Modo immediato / prompt**: `LIST`, `RUN`, `CONT`, `CLEAR`, `EDIT`, inserimento di righe, `RENUMBER`, tasti funzione (`SF`).
-2. **Comandi disco veri**: `SAVE`, `LOAD`, `SCRATCH`, `CATALOG`, `COPY`, `MOVE`, `DATASAVE/DATALOAD BA` con settori, `SELECT DISK/#n`,
-   `$OPEN/$CLOSE`, `LIMITS` reale (settori inizio/fine). Il modello `Platter` oggi ha cataloghi ma non settori da 256 byte:
-   il passo naturale è leggere i `.wvd` di WangEmu (header + settori) e il formato dei programmi tokenizzati.
-3. **Errori** con i codici BASIC-2 (`ERR nn`), `ON ERROR`, `ERROR`.
-4. **Dispositivi**: stampante (`215`/`SELECT PRINT`), seriale, più terminali; `SELECT` oggi è quasi tutto un no-op.
-5. **Numeri**: precisione decimale a 13 cifre (ora `double`), formati di `PRINTUSING` completi (`.`, `,`, `$`, `-`, esponente).
-6. **Istruzioni mancanti**: `INPUT`, `PRINT USING` con più campi, `MAT` aritmetiche/`INV`/`TRN`, `REDIM`, `$PACK/$UNPACK`,
-   `$TRAN` con tabelle da 256 byte, `OR/AND/XOR` bit-a-bit su stringhe, funzioni stringa (`VAL`, `NUM`, `BIN` esteso).
-7. **Prestazioni**: oggi AST interpretato (≈ centinaia di migliaia di istruzioni/s, più che sufficiente); se servisse, compilare l'AST in closure.
+- **`IF..THEN` governs ONE statement**; statements after the colon always run. `: ELSE ...` belongs to the `IF`.
+- **Fixed-length strings** (space-padded, 16 if undeclared); `STR(v,a,n)` works as a value and as a target; comparisons
+  pad the shorter string with spaces; `ALL(hh)` fills, `HEX(..)` yields bytes.
+- **`KEYIN K$`** without line numbers *waits* for a key. **`KEYIN K$,l1,l2`** does not block: with no key `K$` is left
+  unchanged; an ordinary key jumps to `l1`, a special key (cursor) to `l2` (with `l1` = the line itself it drains the buffer).
+- Listings contain **no spaces** (`IF X1(G)<>XOR Y1(G)<>YTHEN`): the parser works on raw text and decides by context
+  whether `XOR` is really `X OR`. Variables are letter + digit + `$`.
+- Numbers print as `" 12 "` (sign position and trailing space), so `PRINT H0;HEX(08)` erases the trailing space.
+- `TAB(n)` **fills with spaces** up to column `n`. A `PRINT` without a final `;` emits `CR LF` (the CR cancels the
+  temporary attribute `HEX(0E)`); at the bottom of the screen the LF scrolls.
+- **Virtual time**: each statement and each byte sent to the terminal costs microseconds (`stmtCost`, `byteCost`,
+  `breakCost`, scaled by `speed`) and execution is slowed accordingly. The pace of many games depended only on the
+  slowness of the 2200, so it is adjustable. `SELECT P1` = slow output (animations).
 
-## Prove
+## Roadmap
+
+1. Editor: `RENUMBER`, `EDIT`, function keys (`SF`), immediate-mode tracing.
+2. Real disk commands: sector-based platters, reading WangEmu `.wvd` images, tokenized program files, `COPY`/`MOVE`, `$OPEN/$CLOSE`.
+3. Error codes (`ERR nn`), `ON ERROR`.
+4. Devices: printer, serial, several terminals; `SELECT` is mostly a no-op today.
+5. Numbers: 13-digit decimal arithmetic (currently `double`), full `PRINTUSING` pictures.
+6. Missing statements: `INPUT`, `MAT` arithmetic / `INV` / `TRN`, `REDIM`, `$PACK/$UNPACK`, string functions (`VAL`, `NUM`).
+
+## Tests
 
 ```
-node test/parse-uns.js          # il parser accetta ogni riga di UNS-MAN e UNS-GAME
-node test/run-uns.js            # esegue il titolo e una partita, stampa lo schermo
-node test/hof-and-speed.js      # classifica su platter (scrittura nome + rilettura) e ritmo del gioco
-node test/title-keys.js         # tasti sul titolo (KEYIN bloccante e non)
+node test/shell.js          # the prompt: entering lines, LIST, RUN, STOP/CONTINUE/HALT, SAVE/LOAD/CATALOG, errors
+node test/parse-uns.js      # the parser accepts every line of UNS-MAN and UNS-GAME (needs the listings)
+node test/run-uns.js        # runs the title and a game, prints the screen (needs the listings)
+node test/hof-and-speed.js  # Hall of Fame on a platter (name entry + reread) and game pace (needs the listings)
+node test/title-keys.js     # keys on the title screen (blocking and non-blocking KEYIN)
 ```
 
-## Crediti
+## License and credits
 
-Font del terminale: [WangEmu](https://github.com/jimbattle/wangemu) di Jim Battle (MIT).
-UNS-MAN / UNS-GAME: Steve McGarry, Wang Laboratories, 1981 — listati usati per studio e conservazione.
+Code: MIT, see the repository `LICENSE`. Terminal font tables: [WangEmu](https://github.com/jimbattle/wangemu) by Jim
+Battle (MIT). UNS-MAN / UNS-GAME: Steve McGarry, Wang Laboratories, 1981 (not distributed here).

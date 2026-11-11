@@ -9,7 +9,7 @@ class Terminal {
     this.ch=new Uint8Array(COLS*ROWS).fill(0x20);
     this.fl=new Uint8Array(COLS*ROWS);
     this.box=new Uint8Array(COLS*(ROWS+1));   // 1=metà sinistra 2=metà destra 4=verticale
-    this.cx=0; this.cy=0; this.dirty=true; this.cols=COLS; this.rows=ROWS;
+    this.cx=0; this.cy=0; this.dirty=true; this.cols=COLS; this.rows=ROWS; this.cursorVisible=false;
     this.alt=false; this.bright=false; this.blink=false; this.inv=false; this.under=false;
     this.on=false; this.temp=false; this.seq=[]; this.onBell=null;
   }
@@ -36,7 +36,9 @@ class Terminal {
       case 0x0F: this.on=false; this.temp=false; return;
       case 0x03: this.clear(); return;
       case 0x01: this.cx=0; this.cy=0; return;
-      case 0x05: case 0x06: case 0x00: case 0x04: case 0x0B: return;   // cursore: non disegnato
+      case 0x05: this.cursorVisible=true; this.dirty=true; return;
+      case 0x06: this.cursorVisible=false; this.dirty=true; return;
+      case 0x00: case 0x04: case 0x0B: return;
       case 0x07: if(this.onBell) this.onBell(); return;
       case 0x08: if(this.cx>0) this.cx--; return;
       case 0x09: if(this.cx<COLS-1) this.cx++; return;

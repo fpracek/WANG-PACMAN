@@ -9,11 +9,15 @@
      e l'esecuzione viene rallentata di conseguenza (il ritmo del gioco dipendeva solo dalla velocità del 2200). */
 class BasicError extends Error {}
 class AllFill { constructor(b){ this.b=b; } }
+/* esiti di controllo: non sono errori, fanno terminare run() con uno stato */
+class ProgramEnd { constructor(direct){ this.direct=!!direct; } }
+class ProgramStop { constructor(line){ this.line=line; } }
+class ProgramHalt { constructor(){} }
 
 const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
   'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','LOAD','REM',
   '$GIO/005(A000)','$BREAK','$TRAN'];
-const NUMFN = ['INT','MOD','MIN','MAX','ABS','RND','SGN','LEN'];
+const NUMFN = ['INT','MOD','MIN','MAX','ABS','RND','SGN','LEN','SQR','EXP','LOG','SIN','COS','TAN','ATN'];
 
 class Parser {
   constructor(src){ this.s=src; this.i=0; }
@@ -234,30 +238,45 @@ class Interp {
     this.curFile=null;
     this.runId=0; this.stmtCost=100; this.byteCost=500; this.breakCost=20000; this.speed=1; this.slow=false;
     this.cache=new Map();
+    this.reportErrors=true;     // vero: un errore di runtime viene scritto in fondo allo schermo e rilanciato (uso 'gioco')
+    this.returnErrors=false;    // vero: run() restituisce {status:'error',...} (uso 'shell')
+    this.haltReq=false; this.dIdx=-1; this.dFresh=false; this.canContinue=false;
+    this.prog=this.buildProgram('(vuoto)',[]); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0;
   }
   /* ---------- programmi ---------- */
-  compile(name){
-    const src=this.disk.readProgram(name); if(!src) throw new BasicError('programma sconosciuto '+name);
-    const hit=this.cache.get(src.key); if(hit && hit.version===src.version) return hit.prog;
-    const text=src.text;
+  /* entries: [{no, src}] con src già decodificato (byte reali). Costruisce AST + tabelle (DATA, DEFFN). */
+  buildProgram(name, entries, patches={}){
     const lines=[], lineMap=new Map(), data=[], dataStart=new Map(), deffn=new Map();
-    const patches=this.patches?.[name]||{};
-    for(let raw of text.split('\n')){
-      raw=raw.replace(/\r$/,'');
-      if(!raw||raw[0]==='#') continue;
-      const m=/^(\d+)(.*)$/.exec(raw); if(!m) continue;
-      const no=+m[1];
-      let src = patches[no]!==undefined ? patches[no] : m[2];
-      src=src.replace(/\\x([0-9a-fA-F]{2})/g,(a,h)=>String.fromCharCode(parseInt(h,16)));
+    for(const e of entries){
+      const no=e.no; const src = patches[no]!==undefined ? patches[no] : e.src;
       let stmts;
-      try{ stmts=new Parser(src).parseLine(); }catch(e){ throw new BasicError(name+' riga '+no+': '+e.message); }
+      try{ stmts=new Parser(src).parseLine(); }catch(err){ const x=new BasicError(name+' riga '+no+': '+err.message); x.line=no; throw x; }
       const idx=lines.length; lines.push({no, stmts}); lineMap.set(no,idx);
       stmts.forEach((st,si)=>{
         if(st.t==='data'){ if(!dataStart.has(no)) dataStart.set(no,data.length); for(const d of st.items) data.push(d); }
         else if(st.t==='deffn'){ deffn.set(st.n,{li:idx,si:si+1,params:st.params}); }
       });
     }
-    const prog={name, lines, lineMap, data, dataStart, deffn};
+    return {name, lines, lineMap, data, dataStart, deffn};
+  }
+  /* legge un listato testuale: "NNN istruzioni" per riga, byte non stampabili come \xHH */
+  static parseListing(text){
+    const out=[];
+    for(let raw of text.split('\n')){
+      raw=raw.replace(/\r$/,''); if(!raw||raw[0]==='#') continue;
+      const m=/^(\d+)(.*)$/.exec(raw); if(!m) continue;
+      out.push({no:+m[1], src:m[2].replace(/\\x([0-9a-fA-F]{2})/g,(a,h)=>String.fromCharCode(parseInt(h,16)))});
+    }
+    return out;
+  }
+  static toListing(entries){
+    const esc=t=>t.replace(/[^\x20-\x7e]|\\/g,c=>'\\x'+c.charCodeAt(0).toString(16).padStart(2,'0'));
+    return entries.map(e=>String(e.no).padStart(4,'0')+esc(e.src)).join('\n')+'\n';
+  }
+  compile(name){
+    const src=this.disk.readProgram(name); if(!src) throw new BasicError('programma sconosciuto '+name);
+    const hit=this.cache.get(src.key); if(hit && hit.version===src.version) return hit.prog;
+    const prog=this.buildProgram(name, Interp.parseListing(src.text), this.patches?.[name]||{});
     this.cache.set(src.key,{version:src.version,prog}); return prog;
   }
   load(name){
@@ -275,10 +294,14 @@ class Interp {
   }
   reset(){ this.runId++; }
   /* ---------- esecuzione ---------- */
+  curLineNo(){ const L=this.prog.lines[this.li]; return L ? L.no : null; }
+  halt(){ this.haltReq=true; if(this.io.abort) this.io.abort(); }
+  /* run() restituisce {status:'end'|'stop'|'halt'|'error'|'reset', line, msg}; con reportErrors (modo gioco) rilancia gli errori */
   async run(){
-    const id=this.runId; let cnt=0; this.vt=0; this.t0=performance.now(); let slice=performance.now();
+    const id=this.runId; let cnt=0; this.vt=0; this.t0=performance.now(); let slice=performance.now(); this.haltReq=false;
     try{
       while(id===this.runId){
+        if(this.haltReq){ this.haltReq=false; return {status:'halt', line:this.curLineNo()}; }
         const r=this.step(); if(r) { await r; this.vt=0; this.t0=performance.now(); }
         if((++cnt&31)===0){
           const now=performance.now(), ahead=this.vt/1000-(now-this.t0);
@@ -287,15 +310,48 @@ class Interp {
           if(now-slice>10){ await new Promise(r=>setTimeout(r,0)); slice=performance.now(); }
         }
       }
+      return {status:'reset'};
     }catch(e){
+      if(e instanceof ProgramEnd) return {status:'end', direct:e.direct};
+      if(e instanceof ProgramStop) return {status:'stop', line:e.line};
+      if(e instanceof ProgramHalt) return {status:'halt', line:this.curLineNo()};
+      const line=this.curLineNo();
+      if(this.returnErrors) return {status:'error', line, msg:e.message||String(e)};
       console.error(e);
-      this.T.at(23,0); this.T.atClear(23,0,80); this.T.print('ERROR '+(this.prog?.lines[this.li]?.no??'?')+': '+(e.message||e).slice(0,60));
+      if(this.reportErrors){ this.T.at(23,0); this.T.atClear(23,0,80); this.T.print('ERROR '+(line??'?')+': '+(e.message||e).slice(0,60)); }
       throw e;
     }
   }
+  /* ---------- uso come ambiente: programma in memoria, RUN, istruzioni dirette ---------- */
+  clearVars(){ this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear(); this.curFile=null; }
+  setProgram(entries){ this.prog=this.buildProgram('PROGRAMMA',entries); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
+  async runFrom(startLine){
+    this.clearVars(); this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false;
+    if(startLine!=null) this.jump(startLine); else { this.li=0; this.si=0; }
+    this.runId++; const r=await this.run(); this.canContinue=(r.status==='stop'||r.status==='halt'); return r;
+  }
+  async continueRun(){ this.runId++; const r=await this.run(); this.canContinue=(r.status==='stop'||r.status==='halt'); return r; }
+  /* istruzione diretta (senza numero di riga): gira come riga aggiunta in coda; variabili condivise col programma */
+  async execDirect(src){
+    const stmts=new Parser(src).parseLine();
+    const saved={prog:this.prog, li:this.li, si:this.si, g:this.gstack, f:this.fstack, dpos:this.dpos};
+    const lines=this.prog.lines.concat([{no:-1,stmts}]); const lineMap=new Map(this.prog.lineMap); lineMap.set(-1,lines.length-1);
+    this.prog={...this.prog, lines, lineMap}; this.dIdx=lines.length-1; this.dFresh=true;
+    this.li=this.dIdx; this.si=0; this.gstack=[]; this.fstack=[]; this.runId++;
+    const res=await this.run();
+    this.dIdx=-1;
+    if(res.status==='end' && !res.direct){ this.canContinue=false; this.prog={...saved.prog}; }   // il programma è girato fino in fondo
+    else { this.prog=saved.prog; this.li=saved.li; this.si=saved.si; this.gstack=saved.g; this.fstack=saved.f; this.dpos=saved.dpos; }
+    return res;
+  }
   step(){
     const L=this.prog.lines[this.li];
-    if(!L){ throw new BasicError('fine programma'); }
+    if(!L){ throw new ProgramEnd(false); }
+    if(this.li===this.dIdx){
+      if(this.si===0 && !this.dFresh) throw new ProgramEnd(false);   // il flusso è "caduto" nella riga diretta
+      this.dFresh=false;
+      if(this.si>=L.stmts.length) throw new ProgramEnd(true);
+    }
     if(this.si>=L.stmts.length){ this.li++; this.si=0; return; }
     const st=L.stmts[this.si++];
     this.vt+=this.stmtCost*this.speed;
@@ -335,7 +391,7 @@ class Interp {
       case 'select': this.slow=(st.dev==='P1'); return;
       case 'keyin': {
         // KEYIN K$ senza numeri di riga ATTENDE un tasto; con numeri di riga non blocca (K$ resta invariato se non c'è tasto)
-        if(st.l1==null && st.l2==null) return (async()=>{ const k=await this.io.next(); this.setLv(st.lv, String.fromCharCode(k.c)); })();
+        if(st.l1==null && st.l2==null) return (async()=>{ const k=await this.io.next(); if(k.abort) throw new ProgramHalt(); this.setLv(st.lv, String.fromCharCode(k.c)); })();
         const k=this.io.poll(); if(!k) return;
         this.setLv(st.lv, String.fromCharCode(k.c)); const l=k.sp?st.l2:st.l1; if(l!=null) this.jump(l); return; }
       case 'linput': return this.doLinput(st);
@@ -356,7 +412,7 @@ class Interp {
       case 'tran': { const t=this.str(this.ev(st.tb)); let v=this.str(this.ev(st.lv)); let o='';
         for(const ch of v){ let r=ch; for(let k=0;k+1<t.length;k+=2) if(t[k+1]===ch){ r=t[k]; break; } o+=r; }
         this.setLv(st.lv,o); return; }
-      case 'stop': this.runId++; throw new BasicError('STOP');
+      case 'stop': throw new ProgramStop(this.curLineNo());
       case 'data': case 'deffn': case 'nop': return;
     }
     throw new BasicError('exec '+st.t);
@@ -388,6 +444,7 @@ class Interp {
       let s=''; const lenMax=this.lvLen(st.lv);
       for(;;){
         const k=await this.io.next();
+        if(k.abort) throw new ProgramHalt();
         if(k.sp) continue;
         if(k.c===13) break;
         if(k.c===8){ if(s.length){ s=s.slice(0,-1); this.T.out(8); this.T.out(0x20); this.T.out(8); } continue; }
@@ -490,7 +547,7 @@ class Interp {
       case 'cmp': return this.cmp(n.op,this.ev(n.l),this.ev(n.r));
       case 'bool': { const a=this.truth(this.ev(n.l)); if(n.op==='AND'){ return a&&this.truth(this.ev(n.r))?1:0; } return a||this.truth(this.ev(n.r))?1:0; }
       case 'arith': { const a=this.ev(n.l), b=this.ev(n.r);
-        switch(n.op){ case '+': return a+b; case '-': return a-b; case '*': return a*b; case '/': return a/b; case '^': return Math.pow(a,b); } break; }
+        switch(n.op){ case '+': return a+b; case '-': return a-b; case '*': return a*b; case '/': if(b===0) throw new BasicError('DIVISION BY ZERO'); return a/b; case '^': return Math.pow(a,b); } break; }
       case 'neg': return -this.ev(n.e);
       case 'cat': return this.str(this.ev(n.l))+this.str(this.ev(n.r));
       case 'all': return new AllFill(n.b);
@@ -503,7 +560,10 @@ class Interp {
       case 'fn': { const a=n.a.map(x=>this.ev(x));
         switch(n.f){ case 'INT': return Math.floor(a[0]); case 'MOD': return a[0]-Math.floor(a[0]/a[1])*a[1]; case 'MIN': return Math.min(a[0],a[1]);
           case 'MAX': return Math.max(a[0],a[1]); case 'ABS': return Math.abs(a[0]); case 'RND': return Math.random(); case 'SGN': return Math.sign(a[0]);
-          case 'LEN': return this.str(a[0]).length; } break; }
+          case 'LEN': return this.str(a[0]).length;
+          case 'SQR': if(a[0]<0) throw new BasicError('SQR OF NEGATIVE'); return Math.sqrt(a[0]);
+          case 'EXP': return Math.exp(a[0]); case 'LOG': if(a[0]<=0) throw new BasicError('LOG OF NON-POSITIVE'); return Math.log(a[0]);
+          case 'SIN': return Math.sin(a[0]); case 'COS': return Math.cos(a[0]); case 'TAN': return Math.tan(a[0]); case 'ATN': return Math.atan(a[0]); } break; }
       case 'str': return this.ev({t:'strf', e:n.base, a:n.a, b:n.b});   // STR() usato come valore
       case 'arr': throw new BasicError('array intero in espressione');
     }
@@ -512,4 +572,4 @@ class Interp {
   truth(v){ return typeof v==='number' ? v!==0 : v!==''; }
 }
 
-if(typeof module!=='undefined') module.exports={Interp,Parser,BasicError,AllFill};
+if(typeof module!=='undefined') module.exports={Interp,Parser,BasicError,AllFill,ProgramEnd,ProgramStop,ProgramHalt};
