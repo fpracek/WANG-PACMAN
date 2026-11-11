@@ -1,4 +1,4 @@
-// Esegue UNS-MAN senza browser, con tasti simulati, e stampa lo schermo (modello CRT puro).
+// Runs UNS-MAN without a browser, with simulated keys, and prints the screen (pure CRT model).
 const fs=require('fs'), path=require('path');
 const {Interp}=require('../src/basic2.js'), {Platter,DiskSystem}=require('../src/platter.js'), {Terminal}=require('../src/wangcrt.js');
 const src=process.env.LISTINGS||path.join(__dirname,'..','..','listings');
@@ -16,10 +16,10 @@ function dump(title){
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
-  it.start('UNS-MAN').catch(e=>{ console.log('ERRORE interprete:',e.message); });
+  it.start('UNS-MAN').catch(e=>{ console.log('interpreter ERROR:',e.message); });
   await sleep(1000); key('1');
-  await sleep(9000); dump('gioco, ~9s dopo il tasto 1');
-  key(0x4D,true); await sleep(2500); dump('dopo freccia sinistra');
-  await sleep(3000); dump('3s dopo');
+  await sleep(9000); dump('game, ~9s after key 1');
+  key(0x4D,true); await sleep(2500); dump('after left arrow');
+  await sleep(3000); dump('3s later');
   it.reset(); process.exit(0);
 })();

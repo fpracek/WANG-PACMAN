@@ -2,20 +2,24 @@
 
 A **Wang BASIC-2** interpreter in plain JavaScript for the browser (and Node, for tests), with **platters**
 (virtual disks), an emulated Wang 2236 terminal and an interactive BASIC-2 prompt. It was built to run original
-listings unchanged: the first client is `UNS-MAN` (Steve McGarry's 1981 Pac-Man clone; the listing is not included),
-which runs **as is**, with only two optional patches for lines that touch hardware.
+listings unchanged: the first client is `UNS-MAN` (Steve McGarry's 1981 Pac-Man clone), which runs **as is**, with only
+two optional patches for lines that touch hardware. That game lives in its own repository,
+[WANG-PACMAN](https://github.com/fpracek/WANG-PACMAN); its original listing is not distributed anywhere here.
 
 ## Architecture
 
 ```
 src/
-  basic2.js     the language: Parser (text -> AST) + Interp (execution, variables, FOR/GOSUB, I/O, run outcomes)
+  dialects.js   dialect profiles: which BASIC-2 version the interpreter emulates (data, not code)
+  basic2.js     the language: Parser (text -> AST) + Interp (execution, variables, FOR/GOSUB, I/O, devices, run outcomes)
   platter.js    Platter (a disk with files) + DiskSystem (mounted drives, lookup, persistence)
+  image.js      reads Wang disk images (.bs2 raw sectors, .wvd) and detokenizes their programs
+  printer.js    Printer: virtual line printer (any width) with PDF output
   wangcrt.js    Terminal: 80x24 screen model with the 2236 control bytes (no DOM)
   crt-canvas.js createCrtRenderer(canvas): drawing with the real font + phosphor effect, blinking cursor
   shell.js      Workstation: the interactive BASIC-2 prompt (enter lines, LIST, RUN, LOAD/SAVE, CATALOG, ...)
   font.js       character-generator tables (from WangEmu, MIT)
-test/           Node tests: prompt, parser on listings, execution, Hall of Fame on a platter, key handling
+test/           Node tests: prompt, dialects, disk images, printing, LINPUT, PDF writer
 ```
 
 The engine does **not know the DOM**: it talks to three devices passed to the constructor.
@@ -52,12 +56,82 @@ const p = disk.mount('310', new Platter('GAMES'));
 p.addProgram('UNS-MAN', listingText);
 ```
 
+### Disk images (.bs2 and .wvd)
+
+`DiskSystem.mountImage(bytes, fileName)` mounts a Wang disk image as **read-only** platters (the first free address from
+`320`; a `.wvd` with several platters mounts one drive each). Two formats are recognised:
+
+- `.bs2`: raw 256-byte sectors (the format Niakwa BASIC-2C uses for its "disk image files with a 2200 directory structure").
+- `.wvd`: WangEmu virtual disks (256-byte `WANG` header, label, platters).
+
+Sector 0 describes the disk; the first sectors are the catalog (16-byte entries: state, program/data, first and last
+sector, 8-character name). Programs are stored **tokenized** (atoms from `0x80`, BCD line numbers) and are detokenized
+to the same listing text WangEmu's `wvdutil list` produces, including the unscrambling of protected programs. They then
+behave like any other file: `CATALOG 320`, `LOAD "NAME"`, `LIST`, `RUN`. Data files are exposed as raw sectors.
+Names are matched ignoring case. Scratched entries are skipped.
+
+Limits: images are read-only (writing back to an image is not implemented), data-file records are not decoded
+(`DATA LOAD DC` on an image data file loads nothing), and a program can be listed even when the interpreter does not
+implement every statement it uses.
+
+Verified against real disks: all 19 programs of a 1401-sector `.bs2` match the listings extracted with `wvdutil`,
+and a 28-file `.wvd` reads correctly.
+
+### Printers and PDF output
+
+Output goes to any *device* attached to the interpreter. The CRT is device `005`; a `Printer` (width 80 or 132 columns,
+66 lines per page) can be attached at an address such as `215`:
+
+```js
+const prn = new Printer({cols: 132, rows: 66, paper: 'letter', greenbar: false});
+interp.attach('215', prn);
+```
+
+From BASIC (or from the prompt): `SELECT PRINT 215` sends `PRINT` / `PRINTUSING` output to the printer, `SELECT LIST 215`
+sends `LIST`, and `SELECT PRINT 005` returns to the screen. `PRINT HEX(0C)` is a form feed. The printer honours CR, LF,
+form feed, backspace (overstrike: underline or bold in the PDF) and tabs; screen addressing (`AT`, `BOX`) is ignored.
+`prn.getText()` returns the text and `prn.toPDF()` a `Uint8Array` with a hand-written PDF-1.4 file (Courier, Letter or
+A4, landscape automatically for wide forms, optional greenbar shading). No dependencies; it works in the browser.
+
 ### The prompt
 
 Type numbered lines to build a program (a number alone deletes the line). Commands: `LIST [a[,b]]`, `RUN [n]`,
 `CONTINUE`, `NEW`, `CLEAR [P]`, `LOAD [RUN] "name"`, `SAVE "name"`, `SCRATCH "name"`, `CATALOG [disk]`,
-`SELECT DISK n`, `DELETE a[,b]`, `HELP`. Anything else is a direct statement (`PRINT 2+3*4`, `A=5`, `PRINT A`).
+`SELECT DISK n`, `SELECT PRINT n`, `SELECT LIST n`, `DELETE a[,b]`, `HELP`, and the workstation extension `DIALECT [id]`.
+Anything else is a direct statement (`PRINT 2+3*4`, `A=5`, `PRINT A`).
 Up/down arrows recall the command history; `ws.halt()` interrupts a running program.
+
+### The Workstation web app
+
+`dist/workstation.html` is a single self-contained page (build it with `python tools/build-workstation.py`): the
+emulated CRT with the BASIC-2 prompt and four panels/controls:
+
+- **BASIC** selector (header): the dialect profile (see below).
+- **Disks**: drives, catalog, load / export / delete, import a text listing, new disk, export / import a whole disk as
+  JSON, and **Mount disk image** for `.bs2` / `.wvd` files (read-only, with Eject).
+- **Printers**: one card per printer (columns, paper, greenbar), text preview and **Download PDF**; add more printers.
+- **Editor**: edit the program as text, send it to the workstation, run it.
+
+`Esc` or the HALT button interrupts a running program. Drive `310` holds a few sample programs (`HELLO`, `PRIMES`,
+`BOXES` for box and block graphics, `GUESS` for keyboard input); drive `320` is yours and is kept in the browser.
+
+## Dialects: choosing the BASIC-2 version
+
+Many versions of Wang BASIC exist. A **dialect profile** (`src/dialects.js`) says what the interpreter accepts, and is
+chosen with the BASIC selector, with `DIALECT id` at the prompt, or in code with `interp.setDialect(id)`:
+
+| id | Version | Status | What is modelled |
+|---|---|---|---|
+| `wang-basic` | Wang BASIC (2200A/B/T) | partial | keyword and function gating: no `ELSE`, `LINPUT`, `AT(`, `BOX(`, `MIN`/`MAX`/`MOD` |
+| `basic2` | Wang BASIC-2 (2200 VP/MVP/LVP) | reference | the language of 2200 VP/MVP programs (default) |
+| `basic2-pc` | Wang PC BASIC-2 | planned | accepted as `basic2`; PC-specific differences not modelled yet |
+| `niakwa-2c` | Niakwa BASIC-2C (NPL) | partial | adds `REM $PC <statement>` (executed); compiler options and `$`-statements not modelled |
+
+Profiles are data (feature flags plus a list of disabled functions), so a version can be added without touching the
+parser. The path towards BASIC-2C is to extend the `niakwa-2c` profile as differences are documented: Niakwa's compiler
+reads `.SRC` text or `.BS2` disk images (already readable here), adds NPL-specific `$` statements, and has compiler options
+(`-NUMBERS`, `-WARNINGS`, `-LCASE`) and its own error codes. Differences found while converting real programs are
+recorded in the profile `notes`.
 
 ## Dialect coverage
 
@@ -88,23 +162,37 @@ Semantics that matter (found on real listings):
 ## Roadmap
 
 1. Editor: `RENUMBER`, `EDIT`, function keys (`SF`), immediate-mode tracing.
-2. Real disk commands: sector-based platters, reading WangEmu `.wvd` images, tokenized program files, `COPY`/`MOVE`, `$OPEN/$CLOSE`.
-3. Error codes (`ERR nn`), `ON ERROR`.
-4. Devices: printer, serial, several terminals; `SELECT` is mostly a no-op today.
-5. Numbers: 13-digit decimal arithmetic (currently `double`), full `PRINTUSING` pictures.
-6. Missing statements: `INPUT`, `MAT` arithmetic / `INV` / `TRN`, `REDIM`, `$PACK/$UNPACK`, string functions (`VAL`, `NUM`).
+2. Disks: writing to images, decoding data-file records (`DATA LOAD DC` on image files), sector-level platters, `COPY`/`MOVE`,
+   `$OPEN/$CLOSE`, saving programs back in tokenized form.
+3. Dialects: document and model the real differences between the versions (semantics, limits, statements), starting
+   with Niakwa BASIC-2C and Wang PC BASIC-2.
+4. Error codes (`ERR nn`), `ON ERROR`.
+5. Devices: serial, several terminals, printer control codes and fonts; `SELECT` for devices other than PRINT/LIST is a no-op.
+6. Numbers: 13-digit decimal arithmetic (currently `double`), full `PRINTUSING` pictures.
+7. Missing statements: `INPUT`, `MAT` arithmetic / `INV` / `TRN`, `REDIM`, `$PACK/$UNPACK`, string functions (`VAL`, `NUM`).
 
 ## Tests
 
 ```
 node test/shell.js          # the prompt: entering lines, LIST, RUN, STOP/CONTINUE/HALT, SAVE/LOAD/CATALOG, errors
-node test/parse-uns.js      # the parser accepts every line of UNS-MAN and UNS-GAME (needs the listings)
-node test/run-uns.js        # runs the title and a game, prints the screen (needs the listings)
-node test/hof-and-speed.js  # Hall of Fame on a platter (name entry + reread) and game pace (needs the listings)
-node test/title-keys.js     # keys on the title screen (blocking and non-blocking KEYIN)
+node test/guess.js          # LINPUT inside a running program (no keystroke is lost)
+node test/dialects.js       # what each dialect accepts, REM $PC, the DIALECT command
+node test/image.js          # disk images built in memory: .bs2 and .wvd, catalog, tokenized programs, mounting
+node test/printing.js       # SELECT PRINT / SELECT LIST routing, form feed, PDF output
+node test/printer.js        # the Printer device and the PDF writer (structure, xref offsets, overstrike, greenbar)
+python tools/build-workstation.py   # rebuild dist/workstation.html
 ```
 
-## License and credits
+The tests that run original programs (UNS-MAN listing parsing, a full game, Hall of Fame, key handling) need the
+original listings, which are not distributed, and live in the [WANG-PACMAN](https://github.com/fpracek/WANG-PACMAN)
+repository.
 
-Code: MIT, see the repository `LICENSE`. Terminal font tables: [WangEmu](https://github.com/jimbattle/wangemu) by Jim
-Battle (MIT). UNS-MAN / UNS-GAME: Steve McGarry, Wang Laboratories, 1981 (not distributed here).
+## License
+
+The code in this repository is released under the [MIT License](LICENSE): use it, modify it and redistribute it anywhere.
+Wang BASIC-2 programs run by the interpreter belong to their respective authors and are not covered by this license.
+
+## Credits
+
+Terminal font tables: [WangEmu](https://github.com/jimbattle/wangemu) by Jim Battle (MIT), see [NOTICE](NOTICE).
+Wang BASIC-2 and the Wang 2200 are products of Wang Laboratories.

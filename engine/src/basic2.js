@@ -1,34 +1,36 @@
-/* ================= BASIC2-JS: interprete Wang BASIC-2 (sottoinsieme, in crescita) =================
-   Semantica fondamentale del dialetto:
-   - IF..THEN governa UNA sola istruzione (o un numero di riga); le istruzioni dopo i due punti girano sempre.
-     ": ELSE ..." appartiene all'IF precedente.
-   - KEYIN K$,l1,l2 non blocca; senza tasto K$ resta invariato; tasto normale -> l1, tasto speciale (frecce) -> l2.
-     KEYIN K$ (senza numeri di riga) attende invece un tasto.
-   - Le stringhe hanno lunghezza fissa (riempite di spazi); STR(v,a,n) vale sia come valore sia come destinazione.
-   - Il tempo è "virtuale": ogni istruzione e ogni byte inviato al terminale costano un po' di microsecondi,
-     e l'esecuzione viene rallentata di conseguenza (il ritmo del gioco dipendeva solo dalla velocità del 2200). */
+/* ================= BASIC2-JS: Wang BASIC-2 interpreter (subset, growing) =================
+   Core semantics of the dialect:
+   - IF..THEN governs ONE statement only (or a line number); statements after the colon always run.
+     ": ELSE ..." belongs to the preceding IF.
+   - KEYIN K$,l1,l2 does not block; with no key K$ is left unchanged; normal key -> l1, special key (arrows) -> l2.
+     KEYIN K$ (without line numbers) waits for a key instead.
+   - Strings have fixed length (padded with spaces); STR(v,a,n) works both as a value and as a destination.
+   - Time is "virtual": every statement and every byte sent to the terminal costs a few microseconds,
+     and execution is slowed down accordingly (the game's pace depended only on the speed of the 2200). */
+const _DL = (typeof module !== 'undefined') ? require('./dialects.js') : { DEFAULT_DIALECT, getDialect };
 class BasicError extends Error {}
 class AllFill { constructor(b){ this.b=b; } }
-/* esiti di controllo: non sono errori, fanno terminare run() con uno stato */
+/* control outcomes: not errors, they make run() finish with a status */
 class ProgramEnd { constructor(direct){ this.direct=!!direct; } }
 class ProgramStop { constructor(line){ this.line=line; } }
 class ProgramHalt { constructor(){} }
 
-const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
+const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','LET','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
   'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','LOAD','REM',
   '$GIO/005(A000)','$BREAK','$TRAN'];
 const NUMFN = ['INT','MOD','MIN','MAX','ABS','RND','SGN','LEN','SQR','EXP','LOG','SIN','COS','TAN','ATN'];
 
 class Parser {
-  constructor(src){ this.s=src; this.i=0; }
+  constructor(src, dialect){ this.s=src; this.i=0; this.d=dialect||_DL.DEFAULT_DIALECT; }
+  need(feature, what){ if(!this.d.features[feature]) this.err(what+' is not available in '+this.d.name); }
   ws(){ while(this.s.charCodeAt(this.i)===32) this.i++; }
   eof(){ this.ws(); return this.i>=this.s.length; }
   peek(w){ this.ws(); return this.s.startsWith(w,this.i); }
   eat(w){ if(this.peek(w)){ this.i+=w.length; return true; } return false; }
-  expect(w){ if(!this.eat(w)) this.err('atteso "'+w+'"'); }
+  expect(w){ if(!this.eat(w)) this.err('expected "'+w+'"'); }
   err(m){ throw new BasicError(m+' @'+this.i+' in: '+this.s.slice(0,120)); }
 
-  /* ---------- istruzioni ---------- */
+  /* ---------- statements ---------- */
   parseLine(){
     const out=[];
     for(;;){
@@ -36,13 +38,14 @@ class Parser {
       if(this.s[this.i]===':'){ this.i++; continue; }
       const st=this.parseStatement(); if(st) out.push(st);
       this.ws();
-      if(this.i<this.s.length && this.s[this.i]!==':') this.err('istruzione inattesa');
+      if(this.i<this.s.length && this.s[this.i]!==':') this.err('unexpected statement');
     }
     return out;
   }
   parseStatement(){
     this.ws(); const s=this.s;
     if(s[this.i]==='%'){ this.i=s.length; return null; }
+    if(this.d.features.remDollarPc && s.startsWith('REM $PC',this.i)){ this.i+=7; this.ws(); return this.i<s.length ? this.parseStatement() : null; }
     for(const kw of STMT_KW) if(s.startsWith(kw,this.i)) return this.stmt(kw);
     return this.assign();
   }
@@ -55,8 +58,8 @@ class Parser {
         return {t:'using', f, e, nl}; }
       case 'IF': { const c=this.expr(); this.expect('THEN'); const th=this.thenPart(); let el=null;
         const save=this.i; this.ws();
-        if(s[this.i]===':'){ let j=this.i+1; while(s[j]===' ') j++; if(s.startsWith('ELSE',j)){ this.i=j+4; el=this.thenPart(); } else this.i=save; }
-        else if(s.startsWith('ELSE',this.i)){ this.i+=4; el=this.thenPart(); }
+        if(s[this.i]===':'){ let j=this.i+1; while(s[j]===' ') j++; if(s.startsWith('ELSE',j)){ this.need('else','ELSE'); this.i=j+4; el=this.thenPart(); } else this.i=save; }
+        else if(s.startsWith('ELSE',this.i)){ this.need('else','ELSE'); this.i+=4; el=this.thenPart(); }
         return {t:'if', c, th, el}; }
       case 'FOR': { const v=this.varName(); this.expect('='); const a=this.expr(); this.expect('TO'); const b=this.expr();
         let st=null; if(this.eat('STEP')) st=this.expr(); return {t:'for', v, a, b, st}; }
@@ -76,7 +79,8 @@ class Parser {
         return {t:'convert', e, lv, pic}; }
       case 'KEYIN': { const lv=this.lvalue(); let l1=null,l2=null; if(this.eat(',')){ l1=this.lineNo(); if(this.eat(',')) l2=this.lineNo(); }
         return {t:'keyin', lv, l1, l2}; }
-      case 'LINPUT': { this.ws(); while(s[this.i]==='-'||s[this.i]==='?') this.i++; return {t:'linput', lv:this.lvalue()}; }
+      case 'LET': return this.assign();
+      case 'LINPUT': { this.need('linput','LINPUT'); this.ws(); while(s[this.i]==='-'||s[this.i]==='?') this.i++; return {t:'linput', lv:this.lvalue()}; }
       case 'DIM': case 'COM': return {t:'dim', com:kw==='COM', decl:this.decls()};
       case 'ON': { const e=this.expr(); const kind=this.eat('GOTO')?'goto':(this.expect('GOSUB'),'gosub'); const list=[];
         for(;;){ this.ws(); if(/\d/.test(s[this.i]||'')) list.push(this.lineNo()); else list.push(null);
@@ -84,11 +88,14 @@ class Parser {
         return {t:'on', e, kind, list}; }
       case 'STOP': { this.ws(); if(s[this.i]==='"') this.i=s.indexOf('"',this.i+1)+1; return {t:'stop'}; }
       case 'LOAD': { this.ws(); if(s[this.i]==='T') this.i++; this.ws(); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1; return {t:'load', name}; }
-      case 'SELECT': { this.ws(); const m=/^P(\d?)/.exec(s.slice(this.i)); let dev='P'; if(m) dev='P'+m[1];
+      case 'SELECT': { this.ws(); const rest=s.slice(this.i);
+        const m2=/^(PRINT|LIST|CO|INPUT|CI)\s*\/?(\d{3})/.exec(rest) || /^(P)\s+\/?(\d{3})/.exec(rest);
+        if(m2){ this.i+=m2[0].length; while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'select', kind:(m2[1]==='P'?'PRINT':m2[1]), addr:m2[2]}; }
+        const m=/^P(\d?)/.exec(rest); let dev='P'; if(m) dev='P'+m[1];
         while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'select', dev}; }
       case 'DEFFN': { this.ws(); if(s[this.i]==="'"){ this.i++; const n=this.lineNo(); const params=[];
           if(s[this.i]==='('){ this.i++; do{ params.push(this.varName()); } while(this.eat(',')); this.expect(')'); }
-          else this.i=s.length;                         // DEFFN'31"..." : tasto funzione, ignorato
+          else this.i=s.length;                         // DEFFN'31"..." : function key, ignored
           return {t:'deffn', n, params}; } this.i=s.length; return null; }
       case 'LIMITS': { this.ws(); if(s[this.i]==='T') this.i++; this.ws(); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1;
         const lv=[]; while(this.eat(',')) lv.push(this.lvalue()); return {t:'limits', name, lv}; }
@@ -97,18 +104,18 @@ class Parser {
       case '$BREAK': { while(/\d/.test(s[this.i]||'')) this.i++; return {t:'break'}; }
       case '$TRAN': { this.expect('('); const lv=this.lvalue(); this.expect(','); const tb=this.expr(); this.expect(')'); this.eat('R'); return {t:'tran', lv, tb}; }
     }
-    this.err('istruzione sconosciuta '+kw);
+    this.err('unknown statement '+kw);
   }
   thenPart(){ this.ws(); if(/\d/.test(this.s[this.i]||'')) return {t:'goto', n:this.lineNo()}; return this.parseStatement(); }
-  lineNo(){ this.ws(); const m=/^\d+/.exec(this.s.slice(this.i)); if(!m) this.err('numero di riga atteso'); this.i+=m[0].length; return +m[0]; }
+  lineNo(){ this.ws(); const m=/^\d+/.exec(this.s.slice(this.i)); if(!m) this.err('line number expected'); this.i+=m[0].length; return +m[0]; }
   print(){
     const items=[]; let nl=true; const s=this.s;
     for(;;){
       this.ws(); if(this.i>=s.length || s[this.i]===':' || s.startsWith('ELSE',this.i)) break;
       nl=true;
-      if(this.eat('AT(')){ const a=[this.expr()]; while(this.eat(',')) a.push(this.expr()); this.expect(')'); items.push({k:'at', a}); }
+      if(this.eat('AT(')){ this.need('printAt','AT('); const a=[this.expr()]; while(this.eat(',')) a.push(this.expr()); this.expect(')'); items.push({k:'at', a}); }
       else if(this.eat('TAB(')){ const a=this.expr(); this.expect(')'); items.push({k:'tab', a}); }
-      else if(this.eat('BOX(')){ const a=this.expr(); this.expect(','); const b=this.expr(); this.expect(')'); items.push({k:'box', a, b}); }
+      else if(this.eat('BOX(')){ this.need('printBox','BOX('); const a=this.expr(); this.expect(','); const b=this.expr(); this.expect(')'); items.push({k:'box', a, b}); }
       else items.push({k:'e', e:this.expr()});
       this.ws();
       if(s[this.i]===';'||s[this.i]===','){ this.i++; nl=false; } else break;
@@ -138,7 +145,7 @@ class Parser {
     if(this.eat('CON')) return {t:'matset', name, v:1};
     return {t:'matcopy', name, src:this.arrName()};
   }
-  arrName(){ this.ws(); const m=/^[A-Z]\d?\$?/.exec(this.s.slice(this.i)); if(!m) this.err('nome array atteso'); this.i+=m[0].length; return m[0]; }
+  arrName(){ this.ws(); const m=/^[A-Z]\d?\$?/.exec(this.s.slice(this.i)); if(!m) this.err('array name expected'); this.i+=m[0].length; return m[0]; }
   decls(){
     const out=[];
     do{
@@ -149,7 +156,7 @@ class Parser {
     } while(this.eat(','));
     return out;
   }
-  numLit(){ this.ws(); const m=/^\d+/.exec(this.s.slice(this.i)); if(!m) this.err('numero atteso'); this.i+=m[0].length; return +m[0]; }
+  numLit(){ this.ws(); const m=/^\d+/.exec(this.s.slice(this.i)); if(!m) this.err('number expected'); this.i+=m[0].length; return +m[0]; }
   assign(){
     const lvs=[this.lvalue()];
     while(this.eat(',')) lvs.push(this.lvalue());
@@ -160,8 +167,8 @@ class Parser {
     }
     return {t:'assign', lvs, v:this.expr()};
   }
-  /* ---------- variabili ---------- */
-  varName(){ this.ws(); const m=/^[A-Z]\d?\$?/.exec(this.s.slice(this.i)); if(!m) this.err('variabile attesa'); this.i+=m[0].length; return m[0]; }
+  /* ---------- variables ---------- */
+  varName(){ this.ws(); const m=/^[A-Z]\d?\$?/.exec(this.s.slice(this.i)); if(!m) this.err('variable expected'); this.i+=m[0].length; return m[0]; }
   lvalue(){
     this.ws();
     if(this.s.startsWith('STR(',this.i)){
@@ -182,7 +189,7 @@ class Parser {
     }
     return {t:'var', name};
   }
-  /* ---------- espressioni ---------- */
+  /* ---------- expressions ---------- */
   expr(){ return this.orE(); }
   orE(){ let l=this.andE(); for(;;){ this.ws(); if(this.s.startsWith('OR',this.i)){ this.i+=2; l={t:'bool',op:'OR',l,r:this.andE()}; } else return l; } }
   andE(){ let l=this.rel(); for(;;){ this.ws(); if(this.s.startsWith('AND',this.i)){ this.i+=3; l={t:'bool',op:'AND',l,r:this.rel()}; } else return l; } }
@@ -224,33 +231,36 @@ class Parser {
       this.i+=op.length; const y=this.add(); this.expect(')'); return {t:'pos', rev, x, op, y}; }
     if(s.startsWith('ADDC',i)){ this.i+=4; return {t:'addc', e:this.primary()}; }
     if(s.startsWith('$PSTAT(',i)){ const j=s.indexOf(')',i); this.i=j+1; return {t:'lit', v:' '.repeat(16)}; }
-    for(const f of NUMFN) if(s.startsWith(f+'(',i)){ this.i+=f.length+1; const a=[this.expr()]; while(this.eat(',')) a.push(this.expr()); this.expect(')'); return {t:'fn', f, a}; }
+    for(const f of NUMFN) if(s.startsWith(f+'(',i)){ if(this.d.disabledFunctions.includes(f)) this.err(f+'( is not available in '+this.d.name); this.i+=f.length+1; const a=[this.expr()]; while(this.eat(',')) a.push(this.expr()); this.expect(')'); return {t:'fn', f, a}; }
     return this.varRef();
   }
 }
 
 /* ================= Interprete ================= */
 class Interp {
-  /* term: dispositivo CRT (vedi wangcrt.js); io: tastiera {poll(),next()}; disk: DiskSystem (platter.js) */
+  /* term: CRT device (see wangcrt.js); io: keyboard {poll(),next()}; disk: DiskSystem (platter.js) */
   constructor(term, io, disk){
     this.T=term; this.io=io; this.disk=disk;
+    this.devices=new Map([['005',term]]);          // address -> device (CRT = 005); printers are attached by the host
+    this.printDev=term; this.listDev=term; this.devByteCost=100;
     this.nums=new Map(); this.strs=new Map(); this.slen=new Map(); this.arrs=new Map(); this.com=new Set();
     this.curFile=null;
     this.runId=0; this.stmtCost=100; this.byteCost=500; this.breakCost=20000; this.speed=1; this.slow=false;
     this.cache=new Map();
-    this.reportErrors=true;     // vero: un errore di runtime viene scritto in fondo allo schermo e rilanciato (uso 'gioco')
-    this.returnErrors=false;    // vero: run() restituisce {status:'error',...} (uso 'shell')
+    this.dialect=_DL.getDialect('basic2');
+    this.reportErrors=true;     // true: a runtime error is written at the bottom of the screen and rethrown ('game' use)
+    this.returnErrors=false;    // true: run() returns {status:'error',...} ('shell' use)
     this.haltReq=false; this.dIdx=-1; this.dFresh=false; this.canContinue=false;
-    this.prog=this.buildProgram('(vuoto)',[]); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0;
+    this.prog=this.buildProgram('(empty)',[]); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0;
   }
-  /* ---------- programmi ---------- */
-  /* entries: [{no, src}] con src già decodificato (byte reali). Costruisce AST + tabelle (DATA, DEFFN). */
+  /* ---------- programs ---------- */
+  /* entries: [{no, src}] with src already decoded (real bytes). Builds the AST + tables (DATA, DEFFN). */
   buildProgram(name, entries, patches={}){
     const lines=[], lineMap=new Map(), data=[], dataStart=new Map(), deffn=new Map();
     for(const e of entries){
       const no=e.no; const src = patches[no]!==undefined ? patches[no] : e.src;
       let stmts;
-      try{ stmts=new Parser(src).parseLine(); }catch(err){ const x=new BasicError(name+' riga '+no+': '+err.message); x.line=no; throw x; }
+      try{ stmts=new Parser(src,this.dialect).parseLine(); }catch(err){ const x=new BasicError(name+' line '+no+': '+err.message); x.line=no; throw x; }
       const idx=lines.length; lines.push({no, stmts}); lineMap.set(no,idx);
       stmts.forEach((st,si)=>{
         if(st.t==='data'){ if(!dataStart.has(no)) dataStart.set(no,data.length); for(const d of st.items) data.push(d); }
@@ -259,7 +269,7 @@ class Interp {
     }
     return {name, lines, lineMap, data, dataStart, deffn};
   }
-  /* legge un listato testuale: "NNN istruzioni" per riga, byte non stampabili come \xHH */
+  /* reads a text listing: "NNN statements" per line, non-printable bytes as \xHH */
   static parseListing(text){
     const out=[];
     for(let raw of text.split('\n')){
@@ -274,7 +284,7 @@ class Interp {
     return entries.map(e=>String(e.no).padStart(4,'0')+esc(e.src)).join('\n')+'\n';
   }
   compile(name){
-    const src=this.disk.readProgram(name); if(!src) throw new BasicError('programma sconosciuto '+name);
+    const src=this.disk.readProgram(name); if(!src) throw new BasicError('unknown program '+name);
     const hit=this.cache.get(src.key); if(hit && hit.version===src.version) return hit.prog;
     const prog=this.buildProgram(name, Interp.parseListing(src.text), this.patches?.[name]||{});
     this.cache.set(src.key,{version:src.version,prog}); return prog;
@@ -282,21 +292,26 @@ class Interp {
   load(name){
     this.prog=this.compile(name);
     this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0;
-    // le variabili non COM vengono azzerate dal caricamento (concatenamento di programmi)
+    // non-COM variables are cleared by loading (program chaining)
     for(const k of [...this.nums.keys()]) if(!this.com.has(k)) this.nums.delete(k);
     for(const k of [...this.strs.keys()]) if(!this.com.has(k)){ this.strs.delete(k); this.slen.delete(k); }
     for(const k of [...this.arrs.keys()]) if(!this.com.has('('+k)) this.arrs.delete(k);
   }
   start(name){
     this.runId++; this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear();
-    this.T.clear(); this.T.hex('0F'); this.slow=false; this.disk.restore();
+    this.T.clear(); this.T.hex('0F'); this.slow=false; this.printDev=this.T; this.listDev=this.T; this.disk.restore();
     this.load(name); return this.run();
   }
   reset(){ this.runId++; }
-  /* ---------- esecuzione ---------- */
+  /* ---------- execution ---------- */
+  /* devices: any object with out(byte), cx, cols, at(), atClear(), drawBox() (a Printer, see printer.js) */
+  attach(addr, dev){ this.devices.set(String(addr), dev); }
+  detach(addr){ const d=this.devices.get(String(addr)); this.devices.delete(String(addr)); if(this.printDev===d) this.printDev=this.T; if(this.listDev===d) this.listDev=this.T; }
+  device(addr){ const d=this.devices.get(String(addr)); if(!d) throw new BasicError('no device at address '+addr); return d; }
+  setDialect(id){ this.dialect=_DL.getDialect(id); this.cache.clear(); }
   curLineNo(){ const L=this.prog.lines[this.li]; return L ? L.no : null; }
   halt(){ this.haltReq=true; if(this.io.abort) this.io.abort(); }
-  /* run() restituisce {status:'end'|'stop'|'halt'|'error'|'reset', line, msg}; con reportErrors (modo gioco) rilancia gli errori */
+  /* run() returns {status:'end'|'stop'|'halt'|'error'|'reset', line, msg}; with reportErrors (game mode) it rethrows errors */
   async run(){
     const id=this.runId; let cnt=0; this.vt=0; this.t0=performance.now(); let slice=performance.now(); this.haltReq=false;
     try{
@@ -322,25 +337,25 @@ class Interp {
       throw e;
     }
   }
-  /* ---------- uso come ambiente: programma in memoria, RUN, istruzioni dirette ---------- */
+  /* ---------- use as an environment: program in memory, RUN, direct statements ---------- */
   clearVars(){ this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear(); this.curFile=null; }
-  setProgram(entries){ this.prog=this.buildProgram('PROGRAMMA',entries); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
+  setProgram(entries){ this.prog=this.buildProgram('PROGRAM',entries); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
   async runFrom(startLine){
     this.clearVars(); this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false;
     if(startLine!=null) this.jump(startLine); else { this.li=0; this.si=0; }
     this.runId++; const r=await this.run(); this.canContinue=(r.status==='stop'||r.status==='halt'); return r;
   }
   async continueRun(){ this.runId++; const r=await this.run(); this.canContinue=(r.status==='stop'||r.status==='halt'); return r; }
-  /* istruzione diretta (senza numero di riga): gira come riga aggiunta in coda; variabili condivise col programma */
+  /* direct statement (no line number): runs as a line appended at the end; variables shared with the program */
   async execDirect(src){
-    const stmts=new Parser(src).parseLine();
+    const stmts=new Parser(src,this.dialect).parseLine();
     const saved={prog:this.prog, li:this.li, si:this.si, g:this.gstack, f:this.fstack, dpos:this.dpos};
     const lines=this.prog.lines.concat([{no:-1,stmts}]); const lineMap=new Map(this.prog.lineMap); lineMap.set(-1,lines.length-1);
     this.prog={...this.prog, lines, lineMap}; this.dIdx=lines.length-1; this.dFresh=true;
     this.li=this.dIdx; this.si=0; this.gstack=[]; this.fstack=[]; this.runId++;
     const res=await this.run();
     this.dIdx=-1;
-    if(res.status==='end' && !res.direct){ this.canContinue=false; this.prog={...saved.prog}; }   // il programma è girato fino in fondo
+    if(res.status==='end' && !res.direct){ this.canContinue=false; this.prog={...saved.prog}; }   // the program ran to the end
     else { this.prog=saved.prog; this.li=saved.li; this.si=saved.si; this.gstack=saved.g; this.fstack=saved.f; this.dpos=saved.dpos; }
     return res;
   }
@@ -348,7 +363,7 @@ class Interp {
     const L=this.prog.lines[this.li];
     if(!L){ throw new ProgramEnd(false); }
     if(this.li===this.dIdx){
-      if(this.si===0 && !this.dFresh) throw new ProgramEnd(false);   // il flusso è "caduto" nella riga diretta
+      if(this.si===0 && !this.dFresh) throw new ProgramEnd(false);   // the flow "fell" into the direct line
       this.dFresh=false;
       if(this.si>=L.stmts.length) throw new ProgramEnd(true);
     }
@@ -359,7 +374,7 @@ class Interp {
   }
   jump(n){
     let idx=this.prog.lineMap.get(n);
-    if(idx===undefined){ idx=this.prog.lines.findIndex(l=>l.no>=n); if(idx<0) throw new BasicError('riga '+n+' inesistente'); }
+    if(idx===undefined){ idx=this.prog.lines.findIndex(l=>l.no>=n); if(idx<0) throw new BasicError('line '+n+' does not exist'); }
     this.li=idx; this.si=0;
   }
   exec(st){
@@ -372,15 +387,15 @@ class Interp {
         const vals=st.args.map(a=>this.ev(a)); d.params.forEach((p,k)=>this.setLv({t:'var',name:p}, vals[k]));
         this.gstack.push({li:this.li,si:this.si}); this.li=d.li; this.si=d.si; return; }
       case 'return': { if(st.k==='all'){ this.gstack.length=0; this.fstack.length=0; return; }
-        const r=this.gstack.pop(); if(!r) throw new BasicError('RETURN senza GOSUB');
+        const r=this.gstack.pop(); if(!r) throw new BasicError('RETURN without GOSUB');
         if(st.k==='clear') return; this.li=r.li; this.si=r.si; return; }
       case 'for': { const a=this.ev(st.a), b=this.ev(st.b), s=st.st?this.ev(st.st):1;
         this.setLv({t:'var',name:st.v}, a);
         const i=this.fstack.findIndex(f=>f.v===st.v); if(i>=0) this.fstack.splice(i,1);
         this.fstack.push({v:st.v, end:b, step:s, li:this.li, si:this.si}); if(this.fstack.length>200) this.fstack.shift(); return; }
       case 'next': { let k=this.fstack.length-1;
-        if(st.v){ while(k>=0 && this.fstack[k].v!==st.v) k--; if(k<0) throw new BasicError('NEXT senza FOR'); this.fstack.length=k+1; }
-        else if(k<0) throw new BasicError('NEXT senza FOR');
+        if(st.v){ while(k>=0 && this.fstack[k].v!==st.v) k--; if(k<0) throw new BasicError('NEXT without FOR'); this.fstack.length=k+1; }
+        else if(k<0) throw new BasicError('NEXT without FOR');
         const f=this.fstack[k]; const v=this.nums.get(f.v)+f.step; this.nums.set(f.v,v);
         if(f.step>=0 ? v<=f.end : v>=f.end){ this.li=f.li; this.si=f.si; } else this.fstack.pop(); return; }
       case 'print': return this.doPrint(st);
@@ -388,9 +403,11 @@ class Interp {
         let t=String(Math.round(v)); if(t.length>w) t='*'.repeat(w); this.emit(t.padStart(w,' ')); if(st.nl) this.emit('\r\n'); return; }
       case 'gio': this.emit(this.str(this.ev(st.e))); return;
       case 'break': this.vt+=this.breakCost*this.speed; return;
-      case 'select': this.slow=(st.dev==='P1'); return;
+      case 'select':
+        if(st.kind){ if(st.kind==='PRINT') this.printDev=this.device(st.addr); else if(st.kind==='LIST') this.listDev=this.device(st.addr); return; }
+        this.slow=(st.dev==='P1'); return;
       case 'keyin': {
-        // KEYIN K$ senza numeri di riga ATTENDE un tasto; con numeri di riga non blocca (K$ resta invariato se non c'è tasto)
+        // KEYIN K$ without line numbers WAITS for a key; with line numbers it does not block (K$ is unchanged if there is no key)
         if(st.l1==null && st.l2==null) return (async()=>{ const k=await this.io.next(); if(k.abort) throw new ProgramHalt(); this.setLv(st.lv, String.fromCharCode(k.c)); })();
         const k=this.io.poll(); if(!k) return;
         this.setLv(st.lv, String.fromCharCode(k.c)); const l=k.sp?st.l2:st.l1; if(l!=null) this.jump(l); return; }
@@ -419,17 +436,17 @@ class Interp {
   }
   /* ---------- I/O ---------- */
   emit(s){
-    const T=this.T;
+    const T=this.printDev;
     for(let i=0;i<s.length;i++) T.out(s.charCodeAt(i));
-    this.vt+=s.length*(this.slow?25000:this.byteCost)*this.speed;
+    this.vt+=s.length*(T===this.T ? (this.slow?25000:this.byteCost) : this.devByteCost)*this.speed;
   }
   doPrint(st){
-    const T=this.T;
+    const T=this.printDev;
     for(const it of st.items){
       switch(it.k){
         case 'at': { const r=this.ev(it.a[0]), c=this.ev(it.a[1]);
           if(it.a.length>2){ T.atClear(r,c,this.ev(it.a[2])); this.vt+=3*this.byteCost*this.speed; } else { T.at(r,c); this.vt+=3*this.byteCost*this.speed; } break; }
-        case 'tab': { // TAB(n) riempie di SPAZI fino a n caratteri sulla riga (cancella, non si limita a muovere il cursore)
+        case 'tab': { // TAB(n) fills with SPACES up to n characters on the line (erases, does not just move the cursor)
           const n=Math.min(this.ev(it.a), T.cols||80); let k=n-T.cx; while(k-- >0) this.emit(' '); break; }
         case 'box': { const h=this.ev(it.a), w=this.ev(it.b); const erase=(h<0||w<0||Object.is(h,-0)||Object.is(w,-0));
           T.drawBox(T.cy,T.cx,Math.abs(h),Math.abs(w),!erase); this.vt+=6*this.byteCost*this.speed; break; }
@@ -464,7 +481,7 @@ class Interp {
     if(st.op==='load'){ const r=this.disk.readData(this.curFile); const a=this.arr('H$'); if(r) for(let k=0;k<a.data.length&&k<r.length;k++) a.data[k]=this.fit(r[k],a.len); return; }
     if(st.op==='save'){ this.disk.writeData(this.curFile, this.arr('H$').data.slice()); }
   }
-  /* ---------- variabili ---------- */
+  /* ---------- variables ---------- */
   declare(d,com){
     const isStr=d.name.endsWith('$');
     if(d.dims){
@@ -476,10 +493,10 @@ class Interp {
       if(com) this.com.add(d.name);
     }
   }
-  arr(name){ const a=this.arrs.get(name); if(!a) throw new BasicError('array non dimensionato '+name); return a; }
+  arr(name){ const a=this.arrs.get(name); if(!a) throw new BasicError('array not dimensioned '+name); return a; }
   idx(a,subs,name){
     let k=0;
-    for(let d=0;d<a.dims.length;d++){ const v=Math.floor(this.ev(subs[d])); if(v<0||v>a.dims[d]) throw new BasicError('indice '+name+'('+v+')'); k=k*a.dims[d]+Math.max(v-1,0); }
+    for(let d=0;d<a.dims.length;d++){ const v=Math.floor(this.ev(subs[d])); if(v<0||v>a.dims[d]) throw new BasicError('index '+name+'('+v+')'); k=k*a.dims[d]+Math.max(v-1,0); }
     return k;
   }
   fit(s,len){ s=String(s); return s.length>=len ? s.slice(0,len) : s+' '.repeat(len-s.length); }
@@ -516,7 +533,7 @@ class Interp {
       const n=lv.b?Math.floor(this.ev(lv.b)):cur.length-a+1;
       if(a<1||n<=0||a+n-1>cur.length) return;
       let piece = v instanceof AllFill ? String.fromCharCode(v.b).repeat(n) : this.fit(this.str(v),n);
-      if(srcNode && srcNode.t==='bitop'){ const o=cur.substr(a-1,n); piece=''; const m=v; // v è il byte
+      if(srcNode && srcNode.t==='bitop'){ const o=cur.substr(a-1,n); piece=''; const m=v; // v is the byte
         for(let k=0;k<n;k++){ const x=o.charCodeAt(k); piece+=String.fromCharCode(srcNode.op==='XOR'?x^m:srcNode.op==='OR'?x|m:x&m); } }
       this.setLv(lv.base, cur.slice(0,a-1)+piece+cur.slice(a-1+n)); return;
     }
@@ -524,14 +541,14 @@ class Interp {
   }
   assignValue(st){
     const v=st.v;
-    if(v.t==='bitop') return this.ev(v.e).charCodeAt(0);     // il byte da combinare
+    if(v.t==='bitop') return this.ev(v.e).charCodeAt(0);     // the byte to combine
     return this.ev(v);
   }
-  addc(lv,v){   // somma con riporto a 16 bit (checksum dell'hall of fame)
+  addc(lv,v){   // 16-bit add with carry (hall of fame checksum)
     const cur=this.str(this.ev(lv)); const n=((cur.charCodeAt(0)||0)<<8|(cur.charCodeAt(1)||0));
     const t=(n+(this.str(v).charCodeAt(0)||0))&0xFFFF; return String.fromCharCode(t>>8,t&255);
   }
-  /* ---------- valutazione ---------- */
+  /* ---------- evaluation ---------- */
   cmp(op,a,b){
     let r;
     if(typeof a==='string'||typeof b==='string'){
@@ -564,8 +581,8 @@ class Interp {
           case 'SQR': if(a[0]<0) throw new BasicError('SQR OF NEGATIVE'); return Math.sqrt(a[0]);
           case 'EXP': return Math.exp(a[0]); case 'LOG': if(a[0]<=0) throw new BasicError('LOG OF NON-POSITIVE'); return Math.log(a[0]);
           case 'SIN': return Math.sin(a[0]); case 'COS': return Math.cos(a[0]); case 'TAN': return Math.tan(a[0]); case 'ATN': return Math.atan(a[0]); } break; }
-      case 'str': return this.ev({t:'strf', e:n.base, a:n.a, b:n.b});   // STR() usato come valore
-      case 'arr': throw new BasicError('array intero in espressione');
+      case 'str': return this.ev({t:'strf', e:n.base, a:n.a, b:n.b});   // STR() used as a value
+      case 'arr': throw new BasicError('whole array in expression');
     }
     throw new BasicError('ev '+n.t);
   }

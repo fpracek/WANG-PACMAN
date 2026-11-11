@@ -11,6 +11,6 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
   it.start('UNS-MAN').catch(e=>console.log('ERR',e.message));
   await sleep(800); q.push({c:49,sp:false});
-  for(let k=0;k<6;k++){ await sleep(400); const L=it.prog.lines[it.li]; console.log(it.prog.name,'riga',L&&L.no,'si',it.si,'cnt?'); }
+  for(let k=0;k<6;k++){ await sleep(400); const L=it.prog.lines[it.li]; console.log(it.prog.name,'line',L&&L.no,'si',it.si,'cnt?'); }
   it.reset(); process.exit(0);
 })();

@@ -1,27 +1,30 @@
-/* ================= Workstation: il "prompt" BASIC-2 sopra Interp =================
-   Gestisce lo schermo come un 2200: si digitano righe numerate (programma in memoria) o comandi/istruzioni dirette.
-   Comandi:  LIST [a[,b]]  RUN [n]  CONTINUE  NEW  CLEAR [P]  LOAD [RUN] [T]"nome"  SAVE [T]"nome"
-             SCRATCH [T]"nome"  CATALOG [unità]  SELECT DISK unità  DELETE a[,b]  HELP
-   Qualunque altra cosa è un'istruzione diretta: PRINT 2+3*4,  A=5,  FOR I=1 TO 3:PRINT I:NEXT I ...
-   Dipendenze: Interp (basic2.js), un DiskSystem (platter.js), un CRT (wangcrt.js), una tastiera {next()} con codici
-   dei cursori su/giù = 0x46/0x45 (sp:true) per la cronologia. */
+/* ================= Workstation: the BASIC-2 "prompt" on top of Interp =================
+   Handles the screen like a 2200: you type numbered lines (program in memory) or commands/direct statements.
+   Commands:  LIST [a[,b]]  RUN [n]  CONTINUE  NEW  CLEAR [P]  LOAD [RUN] [T]"name"  SAVE [T]"name"
+             SCRATCH [T]"name"  CATALOG [drive]  SELECT DISK drive  DELETE a[,b]  HELP
+   Anything else is a direct statement: PRINT 2+3*4,  A=5,  FOR I=1 TO 3:PRINT I:NEXT I ...
+   Dependencies: Interp (basic2.js), a DiskSystem (platter.js), a CRT (wangcrt.js), a keyboard {next()} with cursor
+   up/down codes = 0x46/0x45 (sp:true) for the history. */
 const _B = (typeof module!=='undefined') ? require('./basic2.js') : {Interp, Parser};
+const _DS = (typeof module!=='undefined') ? require('./dialects.js') : {listDialects, getDialect};
 class Workstation {
   constructor(term, io, disk, opts={}){
     this.T=term; this.io=io; this.disk=disk;
     this.interp=new _B.Interp(term,io,disk); this.interp.reportErrors=false; this.interp.returnErrors=true;
-    this.lines=new Map();            // numero riga -> testo sorgente (istruzioni)
+    this.lines=new Map();            // line number -> source text (statements)
     this.history=[]; this.running=false; this.dirty=true;
     this.title=opts.title||'WANG BASIC-2  (BASIC2-JS)';
-    this.onChange=opts.onChange||(()=>{});     // notifica la UI (programma / dischi cambiati)
+    this.onChange=opts.onChange||(()=>{});     // notifies the UI (program / disks changed)
   }
-  /* ---------- schermo ---------- */
+  /* ---------- screen ---------- */
   out(s){ this.T.print(s); }
   nl(){ if(this.T.cx>0) this.out('\r\n'); }
+  /* write to any output device (the CRT or an attached printer) */
+  outDev(dev,s){ if(dev===this.T){ this.out(s); return; } for(let i=0;i<s.length;i++) dev.out(s.charCodeAt(i)); }
   say(s){ this.nl(); this.out(s+'\r\n'); }
   err(s){ this.say('ERROR: '+s); }
-  resetModes(){ this.T.hex('0202000F020400000F05'); }     // set normale, attributi spenti, cursore acceso
-  /* ---------- vita ---------- */
+  resetModes(){ this.T.hex('0202000F020400000F05'); }     // normal set, attributes off, cursor on
+  /* ---------- life cycle ---------- */
   async main(){
     this.T.clear(); this.resetModes();
     this.T.hex('020402000F'); this.out(this.title+'\r\n'); this.T.hex('020400000F');
@@ -50,12 +53,12 @@ class Workstation {
     }
     return s;
   }
-  /* maiuscole fuori dalle virgolette (il parser è sensibile alle maiuscole) */
+  /* uppercase outside quotes (the parser is case-sensitive) */
   upper(t){ let q=false, o=''; for(const c of t){ if(c==='"') q=!q; o+= q ? c : c.toUpperCase(); } return o; }
   entries(){ return [...this.lines.keys()].sort((a,b)=>a-b).map(no=>({no, src:this.lines.get(no)})); }
   changed(){ this.dirty=true; this.interp.canContinue=false; this.onChange(); }
   fileName(s){ return s.toUpperCase(); }
-  /* ---------- elaborazione di una riga ---------- */
+  /* ---------- processing a line ---------- */
   async process(raw){
     const text=raw.trim(); if(!text) return;
     if(this.history[this.history.length-1]!==raw) this.history.push(raw);
@@ -75,24 +78,25 @@ class Workstation {
       case 'CATALOG': case 'CAT': case 'DIR': return this.cmdCatalog(up);
       case 'DELETE':  return this.cmdDelete(up);
       case 'HELP':    return this.cmdHelp();
+      case 'DIALECT': return this.cmdDialect(up);
       case 'RENUMBER': return this.err('RENUMBER not implemented yet');
-      case 'SELECT':  if(/^SELECT\s+DISK/.test(up)) return this.cmdSelect(up); // altrimenti è un'istruzione SELECT
+      case 'SELECT':  if(/^SELECT\s+DISK/.test(up)) return this.cmdSelect(up); // otherwise it is a SELECT statement
     }
     return this.direct(up);
   }
   editLine(no,rest){
     if(!rest){ if(this.lines.delete(no)) this.changed(); return; }
-    try{ new _B.Parser(rest).parseLine(); }catch(e){ this.err('SYNTAX '+e.message.split(' @')[0]); return; }
+    try{ new _B.Parser(rest,this.interp.dialect).parseLine(); }catch(e){ this.err('SYNTAX '+e.message.split(' @')[0]); return; }
     this.lines.set(no,rest); this.changed();
   }
   cmdList(up){
     const m=/^LIST\s*(\d+)?\s*[,-]?\s*(\d+)?/.exec(up); const a=m&&m[1]!==undefined?+m[1]:-Infinity, b=m&&m[2]!==undefined?+m[2]:(m&&m[1]!==undefined&&!/[,-]/.test(up)?+m[1]:Infinity);
-    let n=0; for(const e of this.entries()) if(e.no>=a && e.no<=b){ this.out(String(e.no).padStart(4,'0')+' '+e.src+'\r\n'); n++; }
+    let n=0; for(const e of this.entries()) if(e.no>=a && e.no<=b){ this.outDev(this.interp.listDev, String(e.no).padStart(4,'0')+' '+e.src+'\r\n'); n++; }
     if(!n) this.say('NO PROGRAM');
   }
   buildForRun(){
     try{ this.interp.setProgram(this.entries()); this.dirty=false; return true; }
-    catch(e){ this.say('ERROR IN LINE '+(e.line??'?')+': '+(e.message||'').replace(/^.*riga \d+: /,'')); return false; }
+    catch(e){ this.say('ERROR IN LINE '+(e.line??'?')+': '+(e.message||'').replace(/^.*line \d+: /,'')); return false; }
   }
   report(res){
     switch(res.status){
@@ -126,22 +130,22 @@ class Workstation {
     finally { this.running=false; }
     this.report(res);
   }
-  /* ---------- per la UI: testo del programma e iniezione di comandi ---------- */
+  /* ---------- for the UI: program text and command injection ---------- */
   getProgramText(){ return this.entries().map(e=>String(e.no).padStart(4,'0')+' '+e.src).join('\n')+(this.lines.size?'\n':''); }
-  /* sostituisce il programma con un testo "NNN istruzioni"; restituisce l'elenco degli errori (programma invariato se ce ne sono) */
+  /* replaces the program with a "NNN statements" text; returns the list of errors (program unchanged if there are any) */
   setProgramText(text){
     const errs=[], map=new Map();
     text.split(/\r?\n/).forEach((raw,i)=>{
       const t=raw.trim(); if(!t) return;
-      const m=/^(\d+)\s*(.*)$/.exec(this.upper(t)); if(!m){ errs.push('riga '+(i+1)+': manca il numero di riga'); return; }
+      const m=/^(\d+)\s*(.*)$/.exec(this.upper(t)); if(!m){ errs.push('line '+(i+1)+': missing line number'); return; }
       if(!m[2]) return;
-      try{ new _B.Parser(m[2]).parseLine(); }catch(e){ errs.push('riga '+(i+1)+' ('+m[1]+'): '+String(e.message).split(' @')[0]); return; }
+      try{ new _B.Parser(m[2],this.interp.dialect).parseLine(); }catch(e){ errs.push('line '+(i+1)+' ('+m[1]+'): '+String(e.message).split(' @')[0]); return; }
       map.set(+m[1],m[2]);
     });
     if(!errs.length){ this.lines=map; this.changed(); }
     return errs;
   }
-  /* ---------- dischi ---------- */
+  /* ---------- disks ---------- */
   nameArg(up){ const m=/"([^"]*)"/.exec(up); return m ? this.fileName(m[1]) : null; }
   cmdLoad(up){
     const name=this.nameArg(up); if(!name){ this.err('FILE NAME REQUIRED'); return; }
@@ -170,18 +174,29 @@ class Workstation {
     this.say('DISK '+addr+'  '+p.label+(addr===this.disk.current?'  (CURRENT)':''));
     const l=p.list().sort((a,b)=>a.name<b.name?-1:1);
     if(!l.length) this.out('  (EMPTY)\r\n');
-    for(const f of l) this.out('  '+f.name.padEnd(12)+(f.kind==='program'?'PROG  ':'DATA  ')+String(f.size).padStart(6)+(f.kind==='program'?' CHARS':' RECS')+'\r\n');
+    for(const f of l) this.out('  '+f.name.padEnd(12)+(f.kind==='program'?'PROG  ':'DATA  ')+String(f.size).padStart(6)+' '+String(f.unit||'records').toUpperCase()+'\r\n');
   }
   cmdDelete(up){
     const m=/^DELETE\s*(\d+)\s*[,-]?\s*(\d+)?/.exec(up); if(!m){ this.err('DELETE a[,b]'); return; }
     const a=+m[1], b=m[2]!==undefined?+m[2]:a; let n=0; for(const no of [...this.lines.keys()]) if(no>=a&&no<=b){ this.lines.delete(no); n++; }
     this.changed(); this.say(n+' LINE(S) DELETED');
   }
+  /* workstation extension (not a Wang command): show or change the BASIC dialect */
+  cmdDialect(up){
+    const m=/^DIALECT\s+([A-Za-z0-9-]+)/.exec(up);
+    if(m){
+      let d; try{ d=_DS.getDialect(m[1].toLowerCase()); }catch(e){ this.err(e.message); return; }
+      this.interp.setDialect(d.id); this.dirty=true; this.onChange(); this.say('DIALECT: '+d.name+'  ['+d.status+']'); return;
+    }
+    this.say('CURRENT DIALECT: '+this.interp.dialect.name);
+    for(const d of _DS.listDialects()) this.out((d.id===this.interp.dialect.id?'* ':'  ')+d.id.padEnd(11)+d.name+'  ['+d.status+']\r\n');
+    this.out('DIALECT id   (e.g. DIALECT niakwa-2c)\r\n');
+  }
   cmdHelp(){
     this.say('PROGRAM:  10 PRINT "HI"   (number+text = enter line, number alone = delete)');
     this.out('LIST [a[,b]]   RUN [n]   CONTINUE   DELETE a[,b]   NEW   CLEAR [P]\r\n');
     this.out('LOAD [RUN] "name"   SAVE "name"   SCRATCH "name"\r\n');
-    this.out('CATALOG [disk]   SELECT DISK 310\r\n');
+    this.out('CATALOG [disk]   SELECT DISK 310   DIALECT [id]\r\n');
     this.out('Anything else runs immediately: PRINT 2+3*4   A=5   PRINT A\r\n');
     this.out('Up/Down arrows = command history.   Esc = HALT a running program.\r\n');
   }

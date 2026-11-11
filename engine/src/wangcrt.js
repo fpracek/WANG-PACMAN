@@ -1,6 +1,6 @@
-/* ================= Terminale Wang 2236 (80x24): solo modello, nessun DOM =================
-   Interpreta i byte di controllo del CRT (cancella, cursore, attributi, set alternativo, BOX).
-   Il disegno è in crt-canvas.js. */
+/* ================= Wang 2236 terminal (80x24): model only, no DOM =================
+   Interprets the CRT control bytes (clear, cursor, attributes, alternate set, BOX).
+   Drawing is in crt-canvas.js. */
 const COLS=80, ROWS=24, W=800, H=550, CW=10, CH=22;
 const FL_ALT=1, FL_BRIGHT=2, FL_BLINK=4, FL_INV=8, FL_UNDER=16;
 
@@ -8,13 +8,13 @@ class Terminal {
   constructor(){
     this.ch=new Uint8Array(COLS*ROWS).fill(0x20);
     this.fl=new Uint8Array(COLS*ROWS);
-    this.box=new Uint8Array(COLS*(ROWS+1));   // 1=metà sinistra 2=metà destra 4=verticale
+    this.box=new Uint8Array(COLS*(ROWS+1));   // 1=left half 2=right half 4=vertical
     this.cx=0; this.cy=0; this.dirty=true; this.cols=COLS; this.rows=ROWS; this.cursorVisible=false;
     this.alt=false; this.bright=false; this.blink=false; this.inv=false; this.under=false;
     this.on=false; this.temp=false; this.seq=[]; this.onBell=null;
   }
   at(r,c){ this.cy=Math.max(0,Math.min(ROWS-1,r|0)); this.cx=Math.max(0,Math.min(COLS-1,c|0)); }
-  // AT(r,c,n): cancella n caratteri a partire da (r,c) andando a capo; il cursore resta in (r,c)
+  // AT(r,c,n): erases n characters starting at (r,c), wrapping around; the cursor stays at (r,c)
   atClear(r,c,n){
     r=r|0; c=c|0; n=n|0;
     let rr=r, cc=c;
@@ -24,7 +24,7 @@ class Terminal {
     }
     this.at(r,c); this.dirty=true;
   }
-  hex(h){ for(let i=0;i<h.length;i+=2) this.out(parseInt(h.substr(i,2),16)); }   // invia byte da stringa esadecimale
+  hex(h){ for(let i=0;i<h.length;i+=2) this.out(parseInt(h.substr(i,2),16)); }   // sends bytes from a hex string
   print(t){ for(let i=0;i<t.length;i++) this.out(t.charCodeAt(i)); }
   clear(){ this.ch.fill(0x20); this.fl.fill(0); this.box.fill(0); this.cx=0; this.cy=0; this.dirty=true; }
   out(b){
@@ -78,8 +78,8 @@ class Terminal {
     this.ch.copyWithin(0,COLS); this.fl.copyWithin(0,COLS);
     this.ch.fill(0x20,COLS*(ROWS-1)); this.fl.fill(0,COLS*(ROWS-1)); this.dirty=true;
   }
-  // BOX(h,w): disegna sul bordo superiore delle righe e a metà colonna; "draw=false" cancella.
-  // Il cursore non si muove.
+  // BOX(h,w): draws on the top edge of the rows and at mid-column; "draw=false" erases.
+  // The cursor does not move.
   drawBox(r,c,h,w,draw){
     r|=0; c|=0;
     const set=(row,col,bit)=>{ if(row<0||row>ROWS||col<0||col>=COLS) return; const i=row*COLS+col; this.box[i]=draw?(this.box[i]|bit):(this.box[i]&~bit); };

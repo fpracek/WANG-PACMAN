@@ -1,0 +1,1339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>UNS-MAN</title>
+<style>
+:root{--bg:#050a06;--fg:#7dff8a;--dim:#2f7a3a;--btn:#0e1f12}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:ui-monospace,Consolas,monospace;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%;padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+#top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;font-size:13px;color:var(--dim)}
+#top label{display:flex;align-items:center;gap:6px}
+#top select,#top button{background:var(--btn);color:var(--fg);border:1px solid var(--dim);border-radius:6px;padding:4px 8px;font:inherit}
+#stage{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+canvas{max-width:100%;max-height:100%;aspect-ratio:800/550;width:auto;height:auto;background:#000;border-radius:10px;box-shadow:0 0 40px #0a3a1255}
+#pad{display:none;padding:10px 0 14px;gap:8px;flex-direction:column}
+#pad .row{display:flex;gap:8px;justify-content:center}
+#pad button{flex:1;max-width:96px;min-height:50px;font:600 17px ui-monospace,Consolas,monospace;background:var(--btn);color:var(--fg);border:1px solid var(--dim);border-radius:10px}
+#pad button:active{background:var(--dim);color:#000}
+#pad .sp{visibility:hidden}
+@media (hover:none),(pointer:coarse){#pad{display:flex}#hint{display:none}}
+#hint{font-size:12px;color:var(--dim);text-align:center;padding-bottom:8px}
+#kb{position:fixed;left:-100px;top:0;width:1px;height:1px;opacity:0}
+[hidden]{display:none !important}
+#loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center;background:#050a06f0;border-radius:10px;border:1px dashed var(--dim);user-select:text;-webkit-user-select:text}
+#loader h1{margin:0;font-size:20px}
+#loader p{margin:0;max-width:560px;line-height:1.5;color:#b9f5c0;font-size:14px}
+#loader label.btn{background:var(--btn);border:1px solid var(--fg);border-radius:8px;padding:10px 18px;cursor:pointer;font-size:15px}
+#loader input[type=file]{display:none}
+#loader.over{background:#0b2a12f0;border-style:solid}
+#loaderMsg{margin:0;color:#ffb454;white-space:pre-wrap;min-height:1.3em;font-size:13px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <span>UNS-MAN · Wang 2200 · Steve McGarry 1981</span>
+    <span><label>speed <select id="spd"><option value="slow">slow</option><option value="normal" selected>normal</option><option value="fast">fast</option></select></label>
+    <button id="forget" hidden title="Remove the program saved in this browser">forget game</button>
+    <button id="fs">fullscreen</button></span>
+  </div>
+  <div id="stage">
+    <canvas id="cv" width="800" height="550"></canvas>
+    <div id="loader" hidden>
+      <h1>UNS-MAN needs the original program</h1>
+      <p>This page contains the emulator but <b>not the game</b>. Choose your own copy of UNS-MAN:
+         either the two listing files <b>UNS-MAN.txt</b> and <b>UNS-GAME.txt</b>, or a Wang disk image
+         (<b>.bs2</b> / <b>.wvd</b>) that contains the programs UNS-MAN and UNS-GAME. You can also drop the files here.</p>
+      <label class="btn">Choose files<input type="file" id="loaderFiles" multiple accept=".txt,.bs2,.wvd,.img"></label>
+      <p style="font-size:12px;color:var(--dim)">The files stay in your browser: nothing is uploaded. They are remembered here so you only do this once.</p>
+      <pre id="loaderMsg"></pre>
+    </div>
+  </div>
+  <div id="hint">Arrows or 8·4·6·2 move · 5 stop · 1 / 2 players · Enter confirm · Esc restart</div>
+  <div id="pad">
+    <div class="row"><button class="sp"></button><button data-k="8">▲</button><button class="sp"></button><button data-k="1">1</button><button data-k="2">2</button></div>
+    <div class="row"><button data-k="4">◀</button><button data-k="5">■</button><button data-k="6">▶</button><button data-k="ENTER">ENTER</button><button data-k="KB">⌨</button></div>
+    <div class="row"><button class="sp"></button><button data-k="2">▼</button><button class="sp"></button><button data-k="BKSP">⌫</button><button class="sp"></button></div>
+  </div>
+  <input id="kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+</div>
+<script>
+// font del terminale Wang 2236 (da WangEmu, MIT)
+const FONT_N=[0, 0, 0, 0, 0, 0, 0, 0, 16, 40, 84, 170, 84, 40, 16, 0, 128, 160, 168, 170, 168, 160, 128, 0, 2, 10, 42, 170, 42, 10, 2, 0, 0, 16, 4, 169, 4, 16, 0, 0, 0, 0, 0, 0, 0, 128, 170, 0, 16, 16, 16, 16, 16, 16, 16, 0, 102, 0, 0, 0, 0, 0, 0, 0, 8, 16, 32, 0, 0, 0, 0, 0, 32, 16, 8, 0, 0, 0, 0, 0, 16, 40, 68, 130, 0, 0, 0, 0, 0, 0, 0, 170, 170, 170, 170, 0, 68, 68, 68, 68, 0, 0, 68, 0, 16, 40, 84, 16, 16, 84, 40, 16, 26, 33, 65, 74, 65, 65, 74, 64, 109, 137, 137, 105, 9, 9, 9, 0, 56, 130, 24, 4, 84, 130, 85, 0, 56, 130, 40, 130, 170, 128, 84, 0, 16, 68, 16, 80, 16, 16, 84, 0, 16, 68, 0, 84, 130, 130, 84, 0, 24, 66, 0, 66, 66, 66, 42, 0, 102, 0, 84, 2, 86, 130, 85, 0, 102, 0, 84, 130, 170, 128, 84, 0, 102, 0, 16, 80, 16, 16, 84, 0, 102, 0, 84, 130, 130, 130, 84, 0, 102, 0, 0, 66, 66, 66, 42, 0, 16, 8, 84, 2, 86, 130, 85, 0, 16, 8, 84, 130, 170, 128, 84, 0, 16, 8, 0, 66, 66, 66, 42, 0, 198, 16, 40, 68, 170, 130, 130, 0, 198, 84, 130, 130, 130, 130, 84, 0, 198, 0, 130, 130, 130, 130, 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 48, 48, 48, 48, 0, 0, 48, 0, 36, 36, 36, 0, 0, 0, 0, 0, 68, 68, 170, 68, 170, 68, 68, 0, 16, 84, 144, 84, 18, 84, 16, 0, 194, 196, 8, 16, 32, 70, 134, 0, 48, 72, 48, 74, 132, 138, 81, 0, 16, 16, 16, 0, 0, 0, 0, 0, 8, 16, 32, 32, 32, 16, 8, 0, 32, 16, 8, 8, 8, 16, 32, 0, 68, 40, 214, 40, 68, 0, 0, 0, 0, 16, 16, 214, 16, 16, 0, 0, 0, 0, 0, 0, 40, 40, 8, 16, 0, 0, 0, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 40, 0, 2, 4, 8, 16, 32, 64, 128, 0, 40, 68, 130, 130, 130, 68, 40, 0, 16, 80, 16, 16, 16, 16, 84, 0, 84, 130, 2, 4, 16, 64, 170, 0, 170, 4, 8, 20, 2, 130, 84, 0, 8, 16, 36, 68, 173, 4, 4, 0, 170, 128, 212, 2, 2, 130, 84, 0, 8, 16, 32, 84, 130, 130, 84, 0, 171, 2, 4, 8, 16, 32, 64, 0, 84, 130, 130, 84, 130, 130, 84, 0, 84, 130, 130, 84, 8, 16, 32, 0, 0, 0, 40, 40, 0, 40, 40, 0, 0, 40, 40, 0, 40, 40, 8, 16, 2, 8, 32, 128, 32, 8, 2, 0, 0, 0, 170, 0, 170, 0, 0, 0, 128, 32, 8, 2, 8, 32, 128, 0, 84, 130, 2, 12, 16, 0, 16, 0, 42, 65, 139, 145, 149, 128, 85, 0, 16, 40, 68, 130, 170, 130, 130, 0, 170, 65, 65, 106, 65, 65, 170, 0, 84, 130, 128, 128, 128, 130, 84, 0, 168, 132, 130, 130, 130, 132, 168, 0, 170, 128, 128, 168, 128, 128, 170, 0, 170, 128, 128, 168, 128, 128, 128, 0, 84, 130, 128, 128, 138, 130, 84, 0, 130, 130, 130, 170, 130, 130, 130, 0, 84, 16, 16, 16, 16, 16, 84, 0, 42, 8, 8, 8, 8, 136, 80, 0, 130, 132, 136, 176, 136, 132, 130, 0, 128, 128, 128, 128, 128, 128, 170, 0, 130, 198, 170, 146, 130, 130, 130, 0, 130, 194, 162, 146, 138, 134, 130, 0, 84, 130, 130, 130, 130, 130, 84, 0, 212, 130, 130, 212, 128, 128, 128, 0, 84, 130, 130, 130, 138, 132, 90, 0, 212, 130, 130, 212, 136, 132, 130, 0, 84, 130, 128, 84, 2, 130, 84, 0, 170, 16, 16, 16, 16, 16, 16, 0, 130, 130, 130, 130, 130, 130, 84, 0, 130, 130, 130, 130, 68, 40, 16, 0, 130, 130, 130, 146, 170, 198, 130, 0, 130, 68, 40, 16, 40, 68, 130, 0, 130, 68, 40, 16, 16, 16, 16, 0, 170, 4, 8, 16, 32, 64, 170, 0, 40, 32, 32, 32, 32, 32, 40, 0, 128, 64, 32, 16, 8, 4, 2, 0, 40, 8, 8, 8, 8, 8, 40, 0, 16, 40, 84, 146, 16, 16, 16, 0, 0, 32, 64, 170, 64, 32, 0, 0, 40, 68, 40, 0, 0, 0, 0, 0, 0, 0, 84, 2, 86, 130, 85, 0, 64, 64, 84, 66, 66, 66, 84, 0, 0, 0, 42, 64, 64, 64, 42, 0, 2, 2, 42, 66, 66, 66, 42, 0, 0, 0, 84, 130, 170, 128, 84, 0, 10, 16, 16, 84, 16, 16, 16, 0, 0, 0, 42, 66, 66, 42, 2, 20, 64, 64, 84, 66, 66, 66, 66, 0, 16, 0, 16, 80, 16, 16, 84, 0, 4, 0, 4, 20, 4, 4, 68, 40, 64, 64, 66, 68, 88, 68, 66, 0, 80, 16, 16, 16, 16, 16, 84, 0, 0, 0, 170, 73, 73, 73, 73, 0, 0, 0, 212, 66, 66, 66, 66, 0, 0, 0, 84, 130, 130, 130, 84, 0, 0, 0, 84, 66, 66, 84, 64, 64, 0, 0, 42, 66, 66, 42, 2, 2, 0, 0, 84, 34, 32, 32, 32, 0, 0, 0, 84, 128, 84, 2, 84, 0, 16, 16, 84, 16, 16, 18, 12, 0, 0, 0, 66, 66, 66, 66, 42, 0, 0, 0, 130, 130, 68, 40, 16, 0, 0, 0, 130, 146, 146, 170, 68, 0, 0, 0, 68, 40, 16, 40, 68, 0, 0, 0, 130, 68, 40, 16, 32, 64, 0, 0, 84, 8, 16, 32, 84, 0, 40, 64, 40, 68, 40, 4, 40, 0, 22, 33, 32, 172, 32, 64, 170, 0, 16, 32, 84, 130, 170, 128, 84, 0, 0, 0, 42, 64, 64, 42, 4, 28, 0, 2, 85, 136, 144, 106, 64, 0];
+const FONT_A=[0, 0, 0, 0, 0, 0, 0, 8, 16, 40, 84, 170, 84, 40, 16, 0, 128, 160, 168, 170, 168, 160, 128, 0, 2, 10, 42, 170, 42, 10, 2, 0, 0, 16, 4, 169, 4, 16, 0, 0, 0, 0, 0, 0, 0, 128, 170, 0, 16, 16, 16, 16, 16, 16, 16, 0, 102, 0, 0, 0, 0, 0, 0, 0, 8, 16, 32, 0, 0, 0, 0, 0, 32, 16, 8, 0, 0, 0, 0, 0, 16, 40, 68, 130, 0, 0, 0, 0, 0, 0, 170, 170, 170, 170, 0, 0, 68, 68, 68, 68, 0, 0, 68, 0, 16, 40, 84, 16, 16, 84, 40, 16, 26, 33, 65, 74, 65, 65, 74, 64, 109, 137, 137, 105, 9, 9, 9, 0, 0, 0, 0, 40, 40, 0, 0, 0, 16, 40, 68, 130, 68, 40, 16, 0, 0, 0, 16, 40, 84, 170, 0, 0, 0, 0, 170, 84, 40, 16, 0, 0, 16, 16, 16, 146, 84, 40, 16, 0, 0, 0, 0, 170, 2, 0, 0, 0, 1, 2, 4, 136, 80, 32, 0, 0, 0, 0, 40, 68, 40, 0, 0, 0, 4, 16, 16, 64, 16, 16, 4, 0, 64, 16, 16, 4, 16, 16, 64, 0, 0, 0, 16, 40, 68, 130, 170, 0, 0, 0, 170, 130, 130, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 80, 80, 0, 0, 0, 0, 0, 0, 21, 21, 0, 0, 0, 0, 0, 0, 85, 85, 0, 0, 0, 0, 0, 0, 0, 0, 80, 80, 80, 80, 0, 0, 80, 80, 80, 80, 80, 80, 0, 0, 21, 21, 80, 80, 80, 80, 0, 0, 85, 85, 80, 80, 80, 80, 0, 0, 0, 0, 21, 21, 21, 21, 0, 0, 80, 80, 21, 21, 21, 21, 0, 0, 21, 21, 21, 21, 21, 21, 0, 0, 85, 85, 21, 21, 21, 21, 0, 0, 0, 0, 85, 85, 85, 85, 0, 0, 80, 80, 85, 85, 85, 85, 0, 0, 21, 21, 85, 85, 85, 85, 0, 0, 85, 85, 85, 85, 85, 85, 0, 0, 0, 0, 0, 0, 0, 0, 80, 80, 80, 80, 0, 0, 0, 0, 80, 80, 21, 21, 0, 0, 0, 0, 80, 80, 85, 85, 0, 0, 0, 0, 80, 80, 0, 0, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 21, 21, 80, 80, 80, 80, 80, 80, 85, 85, 80, 80, 80, 80, 80, 80, 0, 0, 21, 21, 21, 21, 80, 80, 80, 80, 21, 21, 21, 21, 80, 80, 21, 21, 21, 21, 21, 21, 80, 80, 85, 85, 21, 21, 21, 21, 80, 80, 0, 0, 85, 85, 85, 85, 80, 80, 80, 80, 85, 85, 85, 85, 80, 80, 21, 21, 85, 85, 85, 85, 80, 80, 85, 85, 85, 85, 85, 85, 80, 80, 0, 0, 0, 0, 0, 0, 21, 21, 80, 80, 0, 0, 0, 0, 21, 21, 21, 21, 0, 0, 0, 0, 21, 21, 85, 85, 0, 0, 0, 0, 21, 21, 0, 0, 80, 80, 80, 80, 21, 21, 80, 80, 80, 80, 80, 80, 21, 21, 21, 21, 80, 80, 80, 80, 21, 21, 85, 85, 80, 80, 80, 80, 21, 21, 0, 0, 21, 21, 21, 21, 21, 21, 80, 80, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 85, 85, 21, 21, 21, 21, 21, 21, 0, 0, 85, 85, 85, 85, 21, 21, 80, 80, 85, 85, 85, 85, 21, 21, 21, 21, 85, 85, 85, 85, 21, 21, 85, 85, 85, 85, 85, 85, 21, 21, 0, 0, 0, 0, 0, 0, 85, 85, 80, 80, 0, 0, 0, 0, 85, 85, 21, 21, 0, 0, 0, 0, 85, 85, 85, 85, 0, 0, 0, 0, 85, 85, 0, 0, 80, 80, 80, 80, 85, 85, 80, 80, 80, 80, 80, 80, 85, 85, 21, 21, 80, 80, 80, 80, 85, 85, 85, 85, 80, 80, 80, 80, 85, 85, 0, 0, 21, 21, 21, 21, 85, 85, 80, 80, 21, 21, 21, 21, 85, 85, 21, 21, 21, 21, 21, 21, 85, 85, 85, 85, 21, 21, 21, 21, 85, 85, 0, 0, 85, 85, 85, 85, 85, 85, 80, 80, 85, 85, 85, 85, 85, 85, 21, 21, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85];
+
+const PROGRAMS={};
+
+</script>
+<script>
+"use strict";
+/* ================= Wang 2236 terminal (80x24): model only, no DOM =================
+   Interprets the CRT control bytes (clear, cursor, attributes, alternate set, BOX).
+   Drawing is in crt-canvas.js. */
+const COLS=80, ROWS=24, W=800, H=550, CW=10, CH=22;
+const FL_ALT=1, FL_BRIGHT=2, FL_BLINK=4, FL_INV=8, FL_UNDER=16;
+
+class Terminal {
+  constructor(){
+    this.ch=new Uint8Array(COLS*ROWS).fill(0x20);
+    this.fl=new Uint8Array(COLS*ROWS);
+    this.box=new Uint8Array(COLS*(ROWS+1));   // 1=left half 2=right half 4=vertical
+    this.cx=0; this.cy=0; this.dirty=true; this.cols=COLS; this.rows=ROWS; this.cursorVisible=false;
+    this.alt=false; this.bright=false; this.blink=false; this.inv=false; this.under=false;
+    this.on=false; this.temp=false; this.seq=[]; this.onBell=null;
+  }
+  at(r,c){ this.cy=Math.max(0,Math.min(ROWS-1,r|0)); this.cx=Math.max(0,Math.min(COLS-1,c|0)); }
+  // AT(r,c,n): erases n characters starting at (r,c), wrapping around; the cursor stays at (r,c)
+  atClear(r,c,n){
+    r=r|0; c=c|0; n=n|0;
+    let rr=r, cc=c;
+    for(let i=0;i<n;i++){
+      if(rr>=0&&rr<ROWS&&cc>=0&&cc<COLS){ this.ch[rr*COLS+cc]=0x20; this.fl[rr*COLS+cc]=0; }
+      if(++cc>=COLS){ cc=0; rr++; }
+    }
+    this.at(r,c); this.dirty=true;
+  }
+  hex(h){ for(let i=0;i<h.length;i+=2) this.out(parseInt(h.substr(i,2),16)); }   // sends bytes from a hex string
+  print(t){ for(let i=0;i<t.length;i++) this.out(t.charCodeAt(i)); }
+  clear(){ this.ch.fill(0x20); this.fl.fill(0); this.box.fill(0); this.cx=0; this.cy=0; this.dirty=true; }
+  out(b){
+    if(this.seq.length){ this.seqByte(b); return; }
+    switch(b){
+      case 0x02: this.seq=[2]; return;
+      case 0x0D: this.temp=false; this.cx=0; return;
+      case 0x0E: this.on=false; this.temp=true; return;
+      case 0x0F: this.on=false; this.temp=false; return;
+      case 0x03: this.clear(); return;
+      case 0x01: this.cx=0; this.cy=0; return;
+      case 0x05: this.cursorVisible=true; this.dirty=true; return;
+      case 0x06: this.cursorVisible=false; this.dirty=true; return;
+      case 0x00: case 0x04: case 0x0B: return;
+      case 0x07: if(this.onBell) this.onBell(); return;
+      case 0x08: if(this.cx>0) this.cx--; return;
+      case 0x09: if(this.cx<COLS-1) this.cx++; return;
+      case 0x0A: if(this.cy<ROWS-1) this.cy++; else this.scroll(); return;
+      case 0x0C: if(this.cy>0) this.cy--; return;
+    }
+    if(b<0x10) return;
+    this.put(b);
+  }
+  seqByte(b){
+    const s=this.seq; s.push(b);
+    const term=(b===0x0E||b===0x0F);
+    if(!term && s.length<8) return;
+    if(s[1]===0x02){ this.alt = s.length>=4 && s[2]!==0; }
+    else if(s[1]===0x04 && s.length===5){
+      const ok=v=>v===0||v===2||v===4||v===0x0B, a=s[2], c=s[3];
+      if(ok(a)&&ok(c)){
+        this.bright=(a===2||a===0x0B); this.blink=(a===4||a===0x0B);
+        this.inv=(c===2||c===0x0B); this.under=(c===4||c===0x0B);
+        this.on=(s[4]===0x0E); this.temp=false;
+      }
+    }
+    this.seq=[];
+  }
+  put(b){
+    const useAlt=b>=0x80&&this.alt;
+    const under=(b>=0x90&&!useAlt)||(this.under&&(this.on||this.temp));
+    const e=this.on||this.temp;
+    let f=0;
+    if(useAlt) f|=FL_ALT; if(under) f|=FL_UNDER;
+    if(e){ if(this.bright) f|=FL_BRIGHT; if(this.blink) f|=FL_BLINK; if(this.inv) f|=FL_INV; }
+    const i=this.cy*COLS+this.cx; this.ch[i]=b&0x7F; this.fl[i]=f;
+    if(++this.cx>=COLS){ this.cx=0; if(this.cy<ROWS-1) this.cy++; else this.scroll(); }
+    this.dirty=true;
+  }
+  scroll(){
+    this.ch.copyWithin(0,COLS); this.fl.copyWithin(0,COLS);
+    this.ch.fill(0x20,COLS*(ROWS-1)); this.fl.fill(0,COLS*(ROWS-1)); this.dirty=true;
+  }
+  // BOX(h,w): draws on the top edge of the rows and at mid-column; "draw=false" erases.
+  // The cursor does not move.
+  drawBox(r,c,h,w,draw){
+    r|=0; c|=0;
+    const set=(row,col,bit)=>{ if(row<0||row>ROWS||col<0||col>=COLS) return; const i=row*COLS+col; this.box[i]=draw?(this.box[i]|bit):(this.box[i]&~bit); };
+    if(w!==0) for(const row of (h===0?[r]:[r,r+h])){
+      set(row,c,2); for(let x=c+1;x<c+w;x++) set(row,x,3); set(row,c+w,1);
+    }
+    if(h!==0) for(let row=r;row<r+h;row++){ set(row,c,4); set(row,c+w,4); }
+    this.dirty=true;
+  }
+}
+
+
+if(typeof module!=='undefined') module.exports={Terminal,COLS,ROWS,W,H,CW,CH,FL_ALT,FL_BRIGHT,FL_BLINK,FL_INV,FL_UNDER};
+
+/* ================= Canvas renderer (real 2236 font + phosphor effect) ================= */
+const glyphCache=new Map();
+function glyphRows(ch,alt,under){
+  const key=ch|(alt?128:0)|(under?256:0);
+  let g=glyphCache.get(key); if(g) return g;
+  const t=alt?FONT_A:FONT_N, block=alt&&ch>=0x40; g=new Array(11);
+  for(let r=0;r<11;r++){
+    let p;
+    if(block) p = r<2 ? t[8*ch+(r&1)] : r<10 ? t[8*ch+r-2] : t[8*ch+6+(r&1)];
+    else p = (r<2||r>=10) ? 0 : t[8*ch+r-2];
+    p<<=1;
+    if(block) p |= ((p<<2)&0x200)|((p>>2)&1);   // blocks fill the cell (like the hardware)
+    if(under&&ch>=0x10&&r===10) p=0x55<<1;
+    g[r]=p;
+  }
+  glyphCache.set(key,g); return g;
+}
+/* createCrtRenderer(canvas): returns render(terminal, blinkOn). Requires FONT_N/FONT_A (font.js). */
+function createCrtRenderer(cv){
+const ctx=cv.getContext('2d');
+const img=ctx.createImageData(W,H), lum=new Float32Array(W*H);
+return function render(T,blinkOn){
+  lum.fill(0);
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const i=r*COLS+c, f=T.fl[i], ch=T.ch[i], inv=!!(f&FL_INV);
+    if(ch===0x20&&!inv&&!(f&FL_ALT)&&!(f&FL_UNDER)) continue;
+    if((f&FL_BLINK)&&!blinkOn) continue;
+    const I=(f&FL_BRIGHT)?1:0.55, rows=glyphRows(ch,!!(f&FL_ALT),!!(f&FL_UNDER));
+    for(let p=0;p<11;p++){
+      let v=rows[p]; if(inv) v=~v&0x3FF;
+      if(!v) continue;
+      const y=r*CH+p*2;
+      for(let x=0;x<10;x++) if((v>>(9-x))&1){
+        const o=y*W+c*CW+x; lum[o]=I; lum[o+W]=I*0.8;
+      }
+    }
+  }
+  // cursor (if on): blinking block under the character
+  if(T.cursorVisible && blinkOn){
+    for(let p=7;p<11;p++) for(let x=0;x<9;x++){ const o=(T.cy*CH+p*2)*W+T.cx*CW+x; lum[o]=1; lum[o+W]=1; }
+  }
+  // boxes (BOX) at normal intensity
+  const line=(x0,x1,y0,y1)=>{ for(let y=y0;y<y1&&y<H;y++) for(let x=x0;x<x1&&x<W;x++){ const o=y*W+x; if(lum[o]<0.6) lum[o]=0.6; } };
+  for(let r=0;r<=ROWS;r++) for(let c=0;c<COLS;c++){
+    const b=T.box[r*COLS+c]; if(!b) continue;
+    if(b&1) line(c*CW,c*CW+5,r*CH,r*CH+2);
+    if(b&2) line(c*CW+5,c*CW+10,r*CH,r*CH+2);
+    if(b&4) line(c*CW+4,c*CW+6,r*CH,r*CH+CH+1);
+  }
+  const d=img.data;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const o=y*W+x;
+    let v=lum[o]+0.28*((x>0?lum[o-1]:0)+(x<W-1?lum[o+1]:0)); if(v>1) v=1;
+    const q=o*4; d[q]=4+v*116; d[q+1]=10+v*245; d[q+2]=6+v*124; d[q+3]=255;
+  }
+  ctx.putImageData(img,0,0);
+}
+}
+
+/* ================= Dialect profiles: which "BASIC-2" are we running? =================
+   Many versions of Wang BASIC exist, from the original 2200 BASIC to Niakwa's BASIC-2C compiler. A profile tells
+   the interpreter what to accept. Profiles are DATA, so a new version can be added without touching the parser.
+
+   features:           booleans checked by the parser (see Parser in basic2.js)
+     else              IF ... THEN ... ELSE ...
+     linput            LINPUT statement
+     printAt           AT(row,col[,n]) inside PRINT
+     printBox          BOX(h,w) inside PRINT (2236-style terminal graphics)
+     remDollarPc       Niakwa extension: "REM $PC <statement>" is executed (a plain REM everywhere else)
+   disabledFunctions:  functions the dialect does not have (calling one is a syntax error)
+   status:             'reference' (modelled as far as we know) | 'partial' | 'planned' (accepted, but behaves like basic2)
+
+   What the profiles are based on (so they can be checked and extended):
+   - WangEmu wvdutil token table (Jim Battle): marks the atoms that exist only in BASIC-2 (FIX(, LGT(, DAC, DSC, SUB,
+     LINPUT, VER(, ELSE, SPACE, ROUND(, AT(, HEXOF(, MAX(, MIN(, MOD(, ERR).
+   - Niakwa B2C help files and the conversion of a real program (see README): REM $PC extension, compiler options.
+   Everything not listed here is NOT modelled yet and is accepted as in basic2. */
+const DIALECTS = {
+  'wang-basic': {
+    id: 'wang-basic',
+    name: 'Wang BASIC (2200A/B/T)',
+    era: '1973-1980',
+    status: 'partial',
+    summary: 'The original 2200 BASIC, before BASIC-2: no ELSE, LINPUT, AT(, BOX(, MIN/MAX/MOD, ROUND, HEXOF, VER.',
+    features: { else: false, linput: false, printAt: false, printBox: false, remDollarPc: false },
+    disabledFunctions: ['MIN', 'MAX', 'MOD'],
+    notes: [
+      'Gating is by keyword and function only; semantic differences of the original BASIC are not modelled yet.',
+      'Single-quoted strings (allowed by the original BASIC) are not supported.',
+    ],
+  },
+  'basic2': {
+    id: 'basic2',
+    name: 'Wang BASIC-2 (2200 VP/MVP/LVP)',
+    era: '1979-1990',
+    status: 'reference',
+    summary: 'The reference dialect of this interpreter: the language of 2200 VP/MVP programs such as UNS-MAN.',
+    features: { else: true, linput: true, printAt: true, printBox: true, remDollarPc: false },
+    disabledFunctions: [],
+    notes: [],
+  },
+  'basic2-pc': {
+    id: 'basic2-pc',
+    name: 'Wang PC BASIC-2',
+    era: '1983-1988',
+    status: 'planned',
+    summary: 'BASIC-2 for the Wang Professional / APC (programs distributed as .BS2 images). Currently identical to basic2.',
+    features: { else: true, linput: true, printAt: true, printBox: true, remDollarPc: false },
+    disabledFunctions: [],
+    notes: ['Differences from the 2200 version (keyboard, screen, file system, speed) are not modelled yet.'],
+  },
+  'niakwa-2c': {
+    id: 'niakwa-2c',
+    name: 'Niakwa BASIC-2C (NPL)',
+    era: '1986-',
+    status: 'partial',
+    summary: 'Niakwa BASIC-2C: BASIC-2 compiled for MS-DOS/Unix. Adds "REM $PC" statements; compiler options are not modelled.',
+    features: { else: true, linput: true, printAt: true, printBox: true, remDollarPc: true },
+    disabledFunctions: [],
+    notes: [
+      'B2C is a compiler: it reads .SRC files or 2200-format disk images (.BS2) and produces .OBJ files for a RunTime.',
+      'Not modelled yet: $-statements specific to NPL, graphics options, compiler options (-NUMBERS, -WARNINGS, -LCASE), error codes.',
+    ],
+  },
+};
+
+const DEFAULT_DIALECT_ID = 'basic2';
+const DEFAULT_DIALECT = DIALECTS[DEFAULT_DIALECT_ID];
+
+function getDialect(id){
+  const d = DIALECTS[id];
+  if (!d) throw new Error('unknown dialect "' + id + '" (available: ' + Object.keys(DIALECTS).join(', ') + ')');
+  return d;
+}
+function listDialects(){ return Object.values(DIALECTS); }
+
+if (typeof module !== 'undefined') module.exports = { DIALECTS, DEFAULT_DIALECT, DEFAULT_DIALECT_ID, getDialect, listDialects };
+
+/* ================= Platter: virtual disks of the Wang 2200 =================
+   A Platter is a "disk" with a catalog of files. The 2200 called every mountable surface of a drive
+   a platter (e.g. fixed/removable at address 310, 320, ...).
+   This module knows nothing about the BASIC language: it only offers catalogs and data; the interpreter uses it through DiskSystem.
+
+   File: { name, kind: 'program' | 'data', text?: string (listing), records?: any[] }
+     - program: text listing (one BASIC line per line, "NNN statements")
+     - data   : record data file (array of strings/numbers), used by DATA LOAD DC / DATA SAVE DC
+*/
+class Platter {
+  constructor(label, opts={}){
+    this.label=label; this.readOnly=!!opts.readOnly; this.files=new Map(); this.version=0;
+  }
+  addProgram(name,text){ this.files.set(name,{name,kind:'program',text}); this.version++; return this; }
+  putData(name,records){ this.files.set(name,{name,kind:'data',records:records.slice(),user:true}); this.version++; }
+  putProgram(name,text){ this.files.set(name,{name,kind:'program',text,user:true}); this.version++; }   // saved by the user: persists
+  has(name){ return this.files.has(name); }
+  get(name){ return this.files.get(name)||null; }
+  remove(name){ const r=this.files.delete(name); if(r) this.version++; return r; }
+  list(){ return [...this.files.values()].map(f=>({name:f.name,kind:f.kind,size:f.kind==='program'?f.text.length:(f.raw?f.raw.length>>8:f.records.length), unit:f.kind==='program'?'chars':(f.raw?'sectors':'records')})); }
+  /* serialization: read-only platters are not saved (their files come from the code) */
+  toJSON(){ const o={label:this.label,files:[]}; for(const f of this.files.values()) o.files.push(f); return o; }
+  static fromJSON(j){ const p=new Platter(j.label); for(const f of j.files) p.files.set(f.name,f); return p; }
+}
+
+/* DiskSystem: mounted drives + file lookup + persistence (localStorage by default).
+   Addresses follow the Wang style: '310' = drive 1 (disk 0), '320', '330'... */
+class DiskSystem {
+  constructor(opts={}){
+    this.drives=new Map();            // address -> Platter
+    this.current='310';               // default drive ("SELECT DISK")
+    this.prefix=opts.prefix||'wang2200';
+    // localStorage may not exist or may throw (sandboxed iframe, data: URL, private mode):
+    // in that case the data stays in memory only.
+    let st=opts.storage;
+    if(st===undefined){ try{ st = typeof localStorage!=='undefined' ? localStorage : null; if(st){ st.getItem('__t'); } }catch(e){ st=null; } }
+    this.storage=st;
+  }
+  mount(addr,platter){ this.drives.set(addr,platter); return platter; }
+  unmount(addr){ this.drives.delete(addr); }
+  /* first free drive address at or after 320 (310 is the system drive) */
+  freeAddress(from=320){ let n=from; while(this.drives.has(String(n))) n+=10; return String(n); }
+  /* mount a disk image (.bs2 raw sectors or .wvd) read-only; returns the addresses used. Needs image.js. */
+  mountImage(bytes,fileName){
+    const build=(typeof module!=='undefined') ? require('./image.js').platterSetFromImage : platterSetFromImage;   // lazy: image.js needs Platter
+    const set=build(bytes,fileName), used=[];
+    for(const pl of set){ const a=this.freeAddress(); this.mount(a,pl); used.push(a); }
+    return used;
+  }
+  select(addr){ if(!this.drives.has(addr)) throw new Error('drive '+addr+' not mounted'); this.current=addr; }
+  /* looks in the current drive first, then in the others */
+  find(name){
+    const cur=this.drives.get(this.current);
+    if(cur&&cur.has(name)) return {addr:this.current,platter:cur,file:cur.get(name)};
+    for(const [addr,p] of this.drives) if(p.has(name)) return {addr,platter:p,file:p.get(name)};
+    const lc=name.toLowerCase();                                    // second chance: ignore case
+    for(const addr of [this.current, ...this.drives.keys()]){
+      const p=this.drives.get(addr); if(!p) continue;
+      for(const k of p.files.keys()) if(k.toLowerCase()===lc) return {addr,platter:p,file:p.get(k)};
+    }
+    return null;
+  }
+  status(name){ const f=this.find(name); return !f ? 0 : (f.file.kind==='program' ? 1 : 2); }
+  readProgram(name){ const f=this.find(name); if(!f||f.file.kind!=='program') return null; return {text:f.file.text, version:f.platter.version, key:f.addr+':'+name}; }
+  readData(name){ const f=this.find(name); return (f&&f.file.kind==='data') ? f.file.records.slice() : null; }
+  writeData(name,records,addr){
+    const f=this.find(name); const p= f ? f.platter : this.drives.get(addr||this.current);
+    if(!p) throw new Error('no platter'); if(p.readOnly) throw new Error('platter is write-protected');
+    p.putData(name,records); this.persist();
+  }
+  /* persistence: saves only the user-created files (user:true) of each platter */
+  persist(){
+    if(!this.storage) return;
+    try{ for(const [addr,p] of this.drives){
+      const files=[...p.files.values()].filter(f=>f.user);              // user files only: listings supplied by the code are not saved
+      this.storage.setItem(this.prefix+':'+addr, JSON.stringify({label:p.label,files}));
+    } }catch(e){}
+  }
+  /* restores the contents of the writable platters already mounted (user data saved earlier) */
+  restore(){
+    if(!this.storage) return;
+    for(const [addr,p] of this.drives){
+      try{ const j=JSON.parse(this.storage.getItem(this.prefix+':'+addr)||'null'); if(j) for(const f of j.files) if(f.user) p.files.set(f.name,f); }catch(e){}
+    }
+  }
+  writeProgram(name,text,addr){
+    const f=this.find(name); const p=f ? f.platter : this.drives.get(addr||this.current);
+    if(!p) throw new Error('no platter'); if(p.readOnly) throw new Error('platter is write-protected');
+    p.putProgram(name,text); this.persist();
+  }
+  remove(name){ const f=this.find(name); if(!f) return false; if(f.platter.readOnly) throw new Error('platter is write-protected'); f.platter.remove(name); this.persist(); return true; }
+  /* exports/imports a platter as a JSON string (to download/upload "disks") */
+  exportPlatter(addr){ return JSON.stringify(this.drives.get(addr).toJSON()); }
+  importPlatter(addr,json){ this.mount(addr,Platter.fromJSON(JSON.parse(json))); this.persist(); }
+}
+if(typeof module!=='undefined') module.exports={Platter,DiskSystem};
+
+/* ================= Wang disk images: raw sector dumps (.bs2) and WangEmu virtual disks (.wvd) =================
+   An image is a sequence of 256-byte sectors. Sector 0 describes the disk; the first N sectors are the catalog
+   (16-byte entries); programs are stored tokenized, one record per sector.
+
+     sector 0:   byte0 = index type (0/1: 2-byte sector addresses, 2: 3-byte), byte1 = number of index sectors
+                 (type 2: bytes 1,2), then the "current end" and "end of catalog area" (the first 16 bytes
+                 are the disk parameter block and take the place of catalog entry 0)
+     entry:      [0] state (0x10 valid, 0x11 scratched, 0x21 recycled)   [1] type (0x80 program, 0x00 data)
+                 [2..3] first sector   [4..5] last sector   [8..15] name (8 chars, space padded)
+     program:    header sector (control byte 0x40, name, 0xFD), body sectors (0x00), trailer sector (0x20, ends with 0xFE).
+                 Each line is: 0xFF, two BCD bytes (line number), tokens/text, 0x0D 0x00 0x00.
+                 Tokens are bytes >= 0x80 (see TOKENS). "Protected" programs may also be scrambled sector by sector.
+
+   Detokenizing follows the listing rules of WangEmu's wvdutil (Jim Battle, MIT), so the text produced here is the same
+   as `wvdutil list`: "NNNstatements", non-printable bytes inside strings written as \xHH.
+   Images mount as READ-ONLY platters: programs appear as listing files, data files as raw sector files. */
+
+const TOKENS = (function(){
+  const t = new Array(256).fill('');
+  const set = (base, list) => list.forEach((s, i) => { t[base + i] = s; });
+  set(0x80, ['LIST ','CLEAR ','RUN ','RENUMBER ','CONTINUE ','SAVE ','LIMITS ','COPY ','KEYIN ','DSKIP ','AND ','OR ','XOR ','TEMP','DISK ','TAPE ']);
+  set(0x90, ['TRACE ','LET ','FIX(','DIM ','ON ','STOP ','END ','DATA ','READ ','INPUT ','GOSUB ','RETURN ','GOTO ','NEXT ','FOR ','IF ']);
+  set(0xA0, ['PRINT ','LOAD ','REM ','RESTORE ','PLOT ','SELECT ','COM ','PRINTUSING ','MAT ','REWIND ','SKIP ','BACKSPACE ','SCRATCH ','MOVE ','CONVERT ','PLOT ']);
+  set(0xB0, ['STEP ','THEN ','TO ','BEG ','OPEN ','CI ','R ','D ','CO ','LGT(','OFF ','DBACKSPACE ','VERIFY ','DA ','BA ','DC ']);
+  set(0xC0, ['FN','ABS(','SQR(','COS(','EXP(','INT(','LOG(','SIN(','SGN(','RND(','TAN(','ARC','#PI','TAB(','DEFFN','TAN(']);
+  set(0xD0, ['SIN(','COS(','HEX(','STR(','ATN(','LEN(','RE','#','%','P','BT','G','VAL(','NUM(','BIN(','POS(']);
+  set(0xE0, ['LS=','ALL','PACK','CLOSE','INIT','HEX','UNPACK','BOOL','ADD','ROTATE','$','ERROR','ERR','DAC ','DSC ','SUB']);
+  set(0xF0, ['LINPUT ','VER(',' ELSE ','SPACE','ROUND(','AT(','HEXOF(','MAX(','MIN(','MOD(']);
+  return t;
+})();
+
+const _P = (typeof module !== 'undefined') ? require('./platter.js') : { Platter };
+const hex2 = n => n.toString(16).padStart(2, '0');
+
+/* 8-character names: trailing spaces / 0xFF removed, odd bytes shown as \xHH */
+function cleanName(bytes){
+  let end = bytes.length;
+  while (end > 0 && (bytes[end - 1] === 0xFF || bytes[end - 1] === 0x20)) end--;
+  let s = '';
+  for (let i = 0; i < end; i++) s += (bytes[i] >= 32 && bytes[i] < 128) ? String.fromCharCode(bytes[i]) : '\\x' + hex2(bytes[i]).toUpperCase();
+  return s;
+}
+
+/* Undo the sector scrambling of "SAVE !" programs (algorithm from the Wang MVP OS 3.5 DCRYPT routine). Returns a copy. */
+function unscrambleSector(block){
+  const s = Uint8Array.from(block);
+  const byte0 = s[0], byte1 = s[1];
+  let offset = (byte1 & 0x60) + 5;
+  const key = s[offset];
+  s[0] = (byte0 & 0xF0) | ((byte1 & 0xF0) >> 4);
+  s[1] = key;
+  s[offset] = ((byte0 & 0x0F) << 4) | (byte1 & 0x0F);
+  /* pass 2 */
+  offset = 0x100 - 0x22;
+  let endidx = offset;
+  let pair = (s[offset] << 8) | s[offset + 1];
+  offset = offset + 26;
+  while (offset !== endidx) {
+    const seed = ((pair << 1) | (pair >> 15)) & 0xFFFF;
+    const nibs = (seed & 0xF00F) | ((seed & 0x00F0) << 4) | ((seed & 0x0F00) >> 4);
+    pair = (s[offset] << 8) | s[offset + 1];
+    const tmp = pair + (0xFFFF ^ nibs);
+    s[offset] = (tmp >> 8) & 0xFF;
+    s[offset + 1] = tmp & 0xFF;
+    offset += 26;
+    if (offset >= 256) offset = (offset + 2) & 0xFF;
+  }
+  /* pass 1 */
+  offset = 0x22; endidx = 0; pair = s[1];
+  while (offset !== endidx) {
+    const seed = ((pair << 1) | (pair >> 15)) & 0xFFFF;
+    const nibs = (seed & 0xF00F) | ((seed & 0x00F0) << 4) | ((seed & 0x0F00) >> 4);
+    pair = (s[offset] << 8) | s[offset + 1];
+    const tmp = pair + (0xFFFF ^ nibs);
+    s[offset] = (tmp >> 8) & 0xFF;
+    s[offset + 1] = tmp & 0xFF;
+    offset = (offset + 34) & 0xFF;
+  }
+  const b0 = s[0];
+  s[0] = b0 & 0xF0;
+  s[1] = 0xFE | (b0 & 0x01);
+  return s;
+}
+
+/* List one program sector as an array of text lines (header sectors give a "# ..." comment line). */
+function listProgramRecord(blk, secnum){
+  const out = [];
+  if ((blk[0] & 0xC0) === 0x00 && (blk[0] & 0x10) === 0x10 && (blk[1] & 0x80) === 0x00) blk = unscrambleSector(blk);
+  if ((blk[0] & 0xC0) === 0x40) {
+    out.push('# Sector ' + secnum + ", program filename = '" + cleanName(blk.subarray(1, 9)) + "'" + ((blk[0] & 0x10) === 0x10 ? ', protected file' : ''));
+    return out;
+  }
+  if ((blk[0] & 0xC0) !== 0x00) { out.push("# " + secnum + " doesn't look like a program record"); return out; }
+  const ATOMIC = 0, QUOTES = 1, REM = 2, IMAGE = 3;
+  let cp = 1, line = '', state = ATOMIC;
+  while (cp < 255 && blk[cp] !== 0xFD && blk[cp] !== 0xFE) {
+    const c = blk[cp];
+    if (c === 0x0D) { out.push(line); line = ''; state = ATOMIC; cp += 3; continue; }
+    if (c < 128) line += String.fromCharCode(c);
+    else if (c === 0xFF && cp < 254) {
+      const n = 1000 * (blk[cp + 1] >> 4) + 100 * (blk[cp + 1] & 15) + 10 * (blk[cp + 2] >> 4) + (blk[cp + 2] & 15);
+      cp += 2; line += String(n);
+    } else if (state !== ATOMIC || TOKENS[c] === '') line += '\\x' + hex2(c);
+    else line += TOKENS[c];
+    if (c === 0xA2 && state === ATOMIC) state = REM;
+    else if (c === 0xD8 && state === ATOMIC) state = IMAGE;
+    else if (c === 0x22 && state === ATOMIC) state = QUOTES;
+    else if (c === 0x22 && state === QUOTES) state = ATOMIC;
+    else if (c === 0x3A && state === REM) state = ATOMIC;
+    cp++;
+  }
+  return out;
+}
+
+/* ---- image parsing ---- */
+class DiskImageError extends Error {}
+
+/* sectors: array of Uint8Array(256). Returns {indexType, files:[{name,state,type,start,end}]} */
+function readCatalog(sectors){
+  if (!sectors.length) throw new DiskImageError('empty image');
+  const s0 = sectors[0], type = s0[0] & 0x7F;
+  if (type > 2) throw new DiskImageError('no catalog (index type ' + type + '): raw sectors?');
+  const nIdx = type === 2 ? ((s0[1] << 8) | s0[2]) : s0[1];
+  if (nIdx < 1 || nIdx > sectors.length) throw new DiskImageError('bad catalog size ' + nIdx);
+  const mask = sectors.length > 32768 ? 0xFFFF : 0x7FFF;
+  const files = [];
+  for (let s = 0; s < nIdx; s++) for (let i = (s === 0 ? 1 : 0); i < 16; i++) {
+    const e = sectors[s].subarray(i * 16, i * 16 + 16);
+    if (e[0] !== 0x10 && e[0] !== 0x11) continue;
+    const start = type < 2 ? (((e[2] << 8) | e[3]) & mask) : ((e[2] << 16) | (e[3] << 8) | e[4]);
+    const end = type < 2 ? (((e[4] << 8) | e[5]) & mask) : ((e[5] << 16) | (e[6] << 8) | e[7]);
+    files.push({ name: cleanName(e.subarray(8, 16)), state: e[0], type: e[1], start, end, catalogSector: s });
+  }
+  return { indexType: type, indexSectors: nIdx, files };
+}
+
+/* tokenized program file -> listing text ("NNNstatements" per line, escapes as \xHH) */
+function programText(sectors, f){
+  const lines = [];
+  for (let n = f.start; n <= f.end && n < sectors.length; n++) {
+    if (sectors[n][0] === 0xA0) break;                       // trailer record of a data-style file: nothing more to list
+    for (const l of listProgramRecord(sectors[n], n)) lines.push(l);
+  }
+  return lines.join('\n') + '\n';
+}
+
+/* bytes -> [{label, sectors}]  (one entry per platter) */
+function splitImage(bytes, fileName){
+  const isWvd = bytes.length >= 256 && bytes[0] === 0x57 && bytes[1] === 0x41 && bytes[2] === 0x4E && bytes[3] === 0x47 && bytes[4] === 0;
+  const platters = [];
+  if (isWvd) {
+    const numSectors = bytes[8] + 256 * bytes[9], numPlatters = bytes[11] + 1;
+    let label = ''; for (let i = 16; i < 256 && bytes[i]; i++) label += String.fromCharCode(bytes[i]);
+    for (let p = 0; p < numPlatters; p++) {
+      const sectors = [];
+      for (let n = 0; n < numSectors; n++) { const o = 256 + (p * numSectors + n) * 256; if (o + 256 <= bytes.length) sectors.push(bytes.subarray(o, o + 256)); }
+      platters.push({ label: (label || fileName) + (numPlatters > 1 ? ' P' + p : ''), sectors });
+    }
+  } else {
+    const sectors = [];
+    for (let o = 0; o + 256 <= bytes.length; o += 256) sectors.push(bytes.subarray(o, o + 256));
+    platters.push({ label: fileName, sectors });
+  }
+  return platters;
+}
+
+/* Build a read-only Platter (see platter.js) from one parsed disk. */
+function platterFromSectors(label, sectors){
+  const cat = readCatalog(sectors);
+  const p = new _P.Platter(label.toUpperCase().replace(/[.][^.]*$/, ''), { readOnly: true });
+  p.image = { indexType: cat.indexType, sectors: sectors.length, files: cat.files.length };
+  for (const f of cat.files) {
+    if (f.state !== 0x10 || f.start > f.end || f.end >= sectors.length) continue;      // skip scratched / damaged entries
+    if (p.files.has(f.name)) continue;
+    if (f.type === 0x80) {
+      p.files.set(f.name, { name: f.name, kind: 'program', text: programText(sectors, f), image: true });
+    } else {
+      const raw = new Uint8Array((f.end - f.start + 1) * 256);
+      for (let n = f.start; n <= f.end; n++) raw.set(sectors[n], (n - f.start) * 256);
+      p.files.set(f.name, { name: f.name, kind: 'data', records: [], raw, image: true });
+    }
+  }
+  p.version++;
+  return p;
+}
+
+/* bytes of a .bs2 / .wvd file -> array of Platters */
+function platterSetFromImage(bytes, fileName){
+  return splitImage(bytes, fileName).map(d => platterFromSectors(d.label, d.sectors));
+}
+
+if (typeof module !== 'undefined') module.exports = { TOKENS, unscrambleSector, listProgramRecord, readCatalog, programText, splitImage, platterFromSectors, platterSetFromImage, DiskImageError };
+
+/* ================= BASIC2-JS: Wang BASIC-2 interpreter (subset, growing) =================
+   Core semantics of the dialect:
+   - IF..THEN governs ONE statement only (or a line number); statements after the colon always run.
+     ": ELSE ..." belongs to the preceding IF.
+   - KEYIN K$,l1,l2 does not block; with no key K$ is left unchanged; normal key -> l1, special key (arrows) -> l2.
+     KEYIN K$ (without line numbers) waits for a key instead.
+   - Strings have fixed length (padded with spaces); STR(v,a,n) works both as a value and as a destination.
+   - Time is "virtual": every statement and every byte sent to the terminal costs a few microseconds,
+     and execution is slowed down accordingly (the game's pace depended only on the speed of the 2200). */
+const _DL = (typeof module !== 'undefined') ? require('./dialects.js') : { DEFAULT_DIALECT, getDialect };
+class BasicError extends Error {}
+class AllFill { constructor(b){ this.b=b; } }
+/* control outcomes: not errors, they make run() finish with a status */
+class ProgramEnd { constructor(direct){ this.direct=!!direct; } }
+class ProgramStop { constructor(line){ this.line=line; } }
+class ProgramHalt { constructor(){} }
+
+const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','LET','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
+  'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','LOAD','REM',
+  '$GIO/005(A000)','$BREAK','$TRAN'];
+const NUMFN = ['INT','MOD','MIN','MAX','ABS','RND','SGN','LEN','SQR','EXP','LOG','SIN','COS','TAN','ATN'];
+
+class Parser {
+  constructor(src, dialect){ this.s=src; this.i=0; this.d=dialect||_DL.DEFAULT_DIALECT; }
+  need(feature, what){ if(!this.d.features[feature]) this.err(what+' is not available in '+this.d.name); }
+  ws(){ while(this.s.charCodeAt(this.i)===32) this.i++; }
+  eof(){ this.ws(); return this.i>=this.s.length; }
+  peek(w){ this.ws(); return this.s.startsWith(w,this.i); }
+  eat(w){ if(this.peek(w)){ this.i+=w.length; return true; } return false; }
+  expect(w){ if(!this.eat(w)) this.err('expected "'+w+'"'); }
+  err(m){ throw new BasicError(m+' @'+this.i+' in: '+this.s.slice(0,120)); }
+
+  /* ---------- statements ---------- */
+  parseLine(){
+    const out=[];
+    for(;;){
+      this.ws(); if(this.i>=this.s.length) break;
+      if(this.s[this.i]===':'){ this.i++; continue; }
+      const st=this.parseStatement(); if(st) out.push(st);
+      this.ws();
+      if(this.i<this.s.length && this.s[this.i]!==':') this.err('unexpected statement');
+    }
+    return out;
+  }
+  parseStatement(){
+    this.ws(); const s=this.s;
+    if(s[this.i]==='%'){ this.i=s.length; return null; }
+    if(this.d.features.remDollarPc && s.startsWith('REM $PC',this.i)){ this.i+=7; this.ws(); return this.i<s.length ? this.parseStatement() : null; }
+    for(const kw of STMT_KW) if(s.startsWith(kw,this.i)) return this.stmt(kw);
+    return this.assign();
+  }
+  stmt(kw){
+    const s=this.s; this.i+=kw.length;
+    switch(kw){
+      case 'REM': this.i=s.length; return null;
+      case 'PRINT': return this.print();
+      case 'PRINTUSING': { const f=this.expr(); this.expect(','); const e=this.expr(); let nl=true; if(this.eat(';')) nl=false;
+        return {t:'using', f, e, nl}; }
+      case 'IF': { const c=this.expr(); this.expect('THEN'); const th=this.thenPart(); let el=null;
+        const save=this.i; this.ws();
+        if(s[this.i]===':'){ let j=this.i+1; while(s[j]===' ') j++; if(s.startsWith('ELSE',j)){ this.need('else','ELSE'); this.i=j+4; el=this.thenPart(); } else this.i=save; }
+        else if(s.startsWith('ELSE',this.i)){ this.need('else','ELSE'); this.i+=4; el=this.thenPart(); }
+        return {t:'if', c, th, el}; }
+      case 'FOR': { const v=this.varName(); this.expect('='); const a=this.expr(); this.expect('TO'); const b=this.expr();
+        let st=null; if(this.eat('STEP')) st=this.expr(); return {t:'for', v, a, b, st}; }
+      case 'NEXT': { this.ws(); let v=null; if(/[A-Z]/.test(s[this.i]||'')) v=this.varName(); return {t:'next', v}; }
+      case 'GOTO': return {t:'goto', n:this.lineNo()};
+      case 'GOSUB': { this.ws(); if(s[this.i]==="'"){ this.i++; const n=this.lineNo(); const args=[];
+          if(this.eat('(')){ if(!this.eat(')')){ do{ args.push(this.expr()); } while(this.eat(',')); this.expect(')'); } }
+          return {t:'gosubfn', n, args}; }
+        return {t:'gosub', n:this.lineNo()}; }
+      case 'RETURN': { let k='one'; if(this.eat('CLEAR')){ k = this.eat('ALL') ? 'all' : 'clear'; } return {t:'return', k}; }
+      case 'RESTORE': { let n=null; if(this.eat('LINE')) n=this.lineNo(); return {t:'restore', n}; }
+      case 'READ': { const lv=[]; do{ lv.push(this.lvalue()); } while(this.eat(',')); return {t:'read', lv}; }
+      case 'DATA': return this.dataStmt();
+      case 'MAT': return this.mat();
+      case 'CONVERT': { const e=this.expr(); this.expect('TO'); const lv=this.lvalue(); let pic=null;
+        if(this.eat(',')){ this.expect('('); const j=s.indexOf(')',this.i); pic=s.slice(this.i,j); this.i=j+1; }
+        return {t:'convert', e, lv, pic}; }
+      case 'KEYIN': { const lv=this.lvalue(); let l1=null,l2=null; if(this.eat(',')){ l1=this.lineNo(); if(this.eat(',')) l2=this.lineNo(); }
+        return {t:'keyin', lv, l1, l2}; }
+      case 'LET': return this.assign();
+      case 'LINPUT': { this.need('linput','LINPUT'); this.ws(); while(s[this.i]==='-'||s[this.i]==='?') this.i++; return {t:'linput', lv:this.lvalue()}; }
+      case 'DIM': case 'COM': return {t:'dim', com:kw==='COM', decl:this.decls()};
+      case 'ON': { const e=this.expr(); const kind=this.eat('GOTO')?'goto':(this.expect('GOSUB'),'gosub'); const list=[];
+        for(;;){ this.ws(); if(/\d/.test(s[this.i]||'')) list.push(this.lineNo()); else list.push(null);
+          if(!this.eat(',')) break; }
+        return {t:'on', e, kind, list}; }
+      case 'STOP': { this.ws(); if(s[this.i]==='"') this.i=s.indexOf('"',this.i+1)+1; return {t:'stop'}; }
+      case 'LOAD': { this.ws(); if(s[this.i]==='T') this.i++; this.ws(); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1; return {t:'load', name}; }
+      case 'SELECT': { this.ws(); const rest=s.slice(this.i);
+        const m2=/^(PRINT|LIST|CO|INPUT|CI)\s*\/?(\d{3})/.exec(rest) || /^(P)\s+\/?(\d{3})/.exec(rest);
+        if(m2){ this.i+=m2[0].length; while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'select', kind:(m2[1]==='P'?'PRINT':m2[1]), addr:m2[2]}; }
+        const m=/^P(\d?)/.exec(rest); let dev='P'; if(m) dev='P'+m[1];
+        while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'select', dev}; }
+      case 'DEFFN': { this.ws(); if(s[this.i]==="'"){ this.i++; const n=this.lineNo(); const params=[];
+          if(s[this.i]==='('){ this.i++; do{ params.push(this.varName()); } while(this.eat(',')); this.expect(')'); }
+          else this.i=s.length;                         // DEFFN'31"..." : function key, ignored
+          return {t:'deffn', n, params}; } this.i=s.length; return null; }
+      case 'LIMITS': { this.ws(); if(s[this.i]==='T') this.i++; this.ws(); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1;
+        const lv=[]; while(this.eat(',')) lv.push(this.lvalue()); return {t:'limits', name, lv}; }
+      case 'DBACKSPACE': { while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'nop'}; }
+      case '$GIO/005(A000)': return {t:'gio', e:this.expr()};
+      case '$BREAK': { while(/\d/.test(s[this.i]||'')) this.i++; return {t:'break'}; }
+      case '$TRAN': { this.expect('('); const lv=this.lvalue(); this.expect(','); const tb=this.expr(); this.expect(')'); this.eat('R'); return {t:'tran', lv, tb}; }
+    }
+    this.err('unknown statement '+kw);
+  }
+  thenPart(){ this.ws(); if(/\d/.test(this.s[this.i]||'')) return {t:'goto', n:this.lineNo()}; return this.parseStatement(); }
+  lineNo(){ this.ws(); const m=/^\d+/.exec(this.s.slice(this.i)); if(!m) this.err('line number expected'); this.i+=m[0].length; return +m[0]; }
+  print(){
+    const items=[]; let nl=true; const s=this.s;
+    for(;;){
+      this.ws(); if(this.i>=s.length || s[this.i]===':' || s.startsWith('ELSE',this.i)) break;
+      nl=true;
+      if(this.eat('AT(')){ this.need('printAt','AT('); const a=[this.expr()]; while(this.eat(',')) a.push(this.expr()); this.expect(')'); items.push({k:'at', a}); }
+      else if(this.eat('TAB(')){ const a=this.expr(); this.expect(')'); items.push({k:'tab', a}); }
+      else if(this.eat('BOX(')){ this.need('printBox','BOX('); const a=this.expr(); this.expect(','); const b=this.expr(); this.expect(')'); items.push({k:'box', a, b}); }
+      else items.push({k:'e', e:this.expr()});
+      this.ws();
+      if(s[this.i]===';'||s[this.i]===','){ this.i++; nl=false; } else break;
+    }
+    return {t:'print', items, nl};
+  }
+  dataStmt(){
+    const s=this.s; this.ws();
+    if(s.startsWith('LOAD',this.i)||s.startsWith('SAVE',this.i)){
+      let j=this.i; while(j<s.length && s[j]!==':') j++;
+      const txt=s.slice(this.i,j); this.i=j;
+      const load=txt.startsWith('LOAD'); const m=/"([^"]*)"/.exec(txt);
+      if(m) return {t:'dc', op:'open', name:m[1]};
+      if(/H\$\(\)/.test(txt)) return {t:'dc', op:load?'load':'save'};
+      return {t:'dc', op:'nop'};
+    }
+    const items=[]; const rest=s.slice(this.i); this.i=s.length;
+    const re=/\s*(?:"([^"]*)"|(-?[0-9.]+))\s*(?:,|$)/y; let m; re.lastIndex=0;
+    while(re.lastIndex<rest.length && (m=re.exec(rest))){ items.push(m[1]!==undefined ? m[1] : parseFloat(m[2])); }
+    return {t:'data', items};
+  }
+  mat(){
+    this.ws();
+    if(this.eat('READ')){ return {t:'matread', name:this.arrName()}; }
+    const name=this.arrName(); this.expect('=');
+    if(this.eat('ZER')) return {t:'matset', name, v:0};
+    if(this.eat('CON')) return {t:'matset', name, v:1};
+    return {t:'matcopy', name, src:this.arrName()};
+  }
+  arrName(){ this.ws(); const m=/^[A-Z]\d?\$?/.exec(this.s.slice(this.i)); if(!m) this.err('array name expected'); this.i+=m[0].length; return m[0]; }
+  decls(){
+    const out=[];
+    do{
+      const name=this.arrName(); let dims=null, len=null;
+      if(this.eat('(')){ dims=[]; do{ dims.push(this.numLit()); } while(this.eat(',')); this.expect(')'); }
+      this.ws(); if(/\d/.test(this.s[this.i]||'')) len=this.numLit();
+      out.push({name, dims, len});
+    } while(this.eat(','));
+    return out;
+  }
+  numLit(){ this.ws(); const m=/^\d+/.exec(this.s.slice(this.i)); if(!m) this.err('number expected'); this.i+=m[0].length; return +m[0]; }
+  assign(){
+    const lvs=[this.lvalue()];
+    while(this.eat(',')) lvs.push(this.lvalue());
+    this.expect('=');
+    this.ws(); const s=this.s;
+    for(const op of ['XOR','OR','AND']) if(s.startsWith(op+' BIN(',this.i)){
+      this.i+=op.length; this.ws(); const e=this.primary(); return {t:'assign', lvs, v:{t:'bitop', op, e}};
+    }
+    return {t:'assign', lvs, v:this.expr()};
+  }
+  /* ---------- variables ---------- */
+  varName(){ this.ws(); const m=/^[A-Z]\d?\$?/.exec(this.s.slice(this.i)); if(!m) this.err('variable expected'); this.i+=m[0].length; return m[0]; }
+  lvalue(){
+    this.ws();
+    if(this.s.startsWith('STR(',this.i)){
+      this.i+=4; const base=this.varRef(); let a=null,b=null;
+      if(this.eat(',')){ this.ws(); if(this.s[this.i]!==',' && this.s[this.i]!==')') a=this.expr();
+        if(this.eat(',')){ this.ws(); if(this.s[this.i]!==')') b=this.expr(); } }
+      this.expect(')'); return {t:'str', base, a, b};
+    }
+    return this.varRef();
+  }
+  varRef(){
+    const name=this.varName();
+    if(this.s[this.i]==='('){
+      this.i++; this.ws();
+      if(this.s[this.i]===')'){ this.i++; return {t:'arr', name}; }
+      const subs=[this.expr()]; while(this.eat(',')) subs.push(this.expr()); this.expect(')');
+      return {t:'el', name, subs};
+    }
+    return {t:'var', name};
+  }
+  /* ---------- expressions ---------- */
+  expr(){ return this.orE(); }
+  orE(){ let l=this.andE(); for(;;){ this.ws(); if(this.s.startsWith('OR',this.i)){ this.i+=2; l={t:'bool',op:'OR',l,r:this.andE()}; } else return l; } }
+  andE(){ let l=this.rel(); for(;;){ this.ws(); if(this.s.startsWith('AND',this.i)){ this.i+=3; l={t:'bool',op:'AND',l,r:this.rel()}; } else return l; } }
+  rel(){
+    let l=this.add();
+    for(;;){
+      this.ws(); const s=this.s; let op=null;
+      for(const o of ['<>','<=','>=','=','<','>']) if(s.startsWith(o,this.i)){ op=o; break; }
+      if(!op) return l;
+      this.i+=op.length; l={t:'cmp', op, l, r:this.add()};
+    }
+  }
+  add(){
+    let l=this.mul();
+    for(;;){ this.ws(); const c=this.s[this.i];
+      if(c==='+'||c==='-'){ this.i++; l={t:'arith',op:c,l,r:this.mul()}; }
+      else if(c==='&'){ this.i++; l={t:'cat',l,r:this.mul()}; }
+      else return l; }
+  }
+  mul(){ let l=this.pow(); for(;;){ this.ws(); const c=this.s[this.i]; if(c==='*'||c==='/'){ this.i++; l={t:'arith',op:c,l,r:this.pow()}; } else return l; } }
+  pow(){ const l=this.unary(); this.ws(); if(this.s[this.i]==='^'){ this.i++; return {t:'arith',op:'^',l,r:this.pow()}; } return l; }
+  unary(){ this.ws(); const c=this.s[this.i];
+    if(c==='-'){ this.i++; return {t:'neg', e:this.unary()}; }
+    if(c==='+'){ this.i++; return this.unary(); }
+    return this.primary(); }
+  primary(){
+    this.ws(); const s=this.s, i=this.i, c=s[i];
+    if(c==='('){ this.i++; const e=this.expr(); this.expect(')'); return e; }
+    if(c==='"'){ const j=s.indexOf('"',i+1); this.i=j+1; return {t:'lit', v:s.slice(i+1,j)}; }
+    if(/[0-9.]/.test(c)){ const m=/^\d*\.?\d+|^\d+\.?/.exec(s.slice(i)); this.i+=m[0].length; return {t:'lit', v:parseFloat(m[0])}; }
+    if(s.startsWith('HEX(',i)){ const j=s.indexOf(')',i); const h=s.slice(i+4,j); this.i=j+1; let r=''; for(let k=0;k<h.length;k+=2) r+=String.fromCharCode(parseInt(h.substr(k,2),16)); return {t:'lit', v:r}; }
+    if(s.startsWith('ALL(',i)){ const j=s.indexOf(')',i); const h=s.slice(i+4,j); this.i=j+1; return {t:'all', b:parseInt(h,16)}; }
+    if(s.startsWith('BIN(',i)){ this.i+=4; const e=this.expr(); this.expect(')'); return {t:'bin', e}; }
+    if(s.startsWith('STR(',i)){ this.i+=4; const e=this.expr(); let a=null,b=null;
+      if(this.eat(',')){ this.ws(); if(s[this.i]!==','&&s[this.i]!==')') a=this.expr(); if(this.eat(',')){ this.ws(); if(s[this.i]!==')') b=this.expr(); } }
+      this.expect(')'); return {t:'strf', e, a, b}; }
+    if(s.startsWith('POS(',i)){ this.i+=4; this.ws(); let rev=false; if(s[this.i]==='-'){ rev=true; this.i++; }
+      const x=this.add(); this.ws(); let op=null; for(const o of ['<>','<=','>=','=','<','>']) if(s.startsWith(o,this.i)){ op=o; break; }
+      this.i+=op.length; const y=this.add(); this.expect(')'); return {t:'pos', rev, x, op, y}; }
+    if(s.startsWith('ADDC',i)){ this.i+=4; return {t:'addc', e:this.primary()}; }
+    if(s.startsWith('$PSTAT(',i)){ const j=s.indexOf(')',i); this.i=j+1; return {t:'lit', v:' '.repeat(16)}; }
+    for(const f of NUMFN) if(s.startsWith(f+'(',i)){ if(this.d.disabledFunctions.includes(f)) this.err(f+'( is not available in '+this.d.name); this.i+=f.length+1; const a=[this.expr()]; while(this.eat(',')) a.push(this.expr()); this.expect(')'); return {t:'fn', f, a}; }
+    return this.varRef();
+  }
+}
+
+/* ================= Interprete ================= */
+class Interp {
+  /* term: CRT device (see wangcrt.js); io: keyboard {poll(),next()}; disk: DiskSystem (platter.js) */
+  constructor(term, io, disk){
+    this.T=term; this.io=io; this.disk=disk;
+    this.devices=new Map([['005',term]]);          // address -> device (CRT = 005); printers are attached by the host
+    this.printDev=term; this.listDev=term; this.devByteCost=100;
+    this.nums=new Map(); this.strs=new Map(); this.slen=new Map(); this.arrs=new Map(); this.com=new Set();
+    this.curFile=null;
+    this.runId=0; this.stmtCost=100; this.byteCost=500; this.breakCost=20000; this.speed=1; this.slow=false;
+    this.cache=new Map();
+    this.dialect=_DL.getDialect('basic2');
+    this.reportErrors=true;     // true: a runtime error is written at the bottom of the screen and rethrown ('game' use)
+    this.returnErrors=false;    // true: run() returns {status:'error',...} ('shell' use)
+    this.haltReq=false; this.dIdx=-1; this.dFresh=false; this.canContinue=false;
+    this.prog=this.buildProgram('(empty)',[]); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0;
+  }
+  /* ---------- programs ---------- */
+  /* entries: [{no, src}] with src already decoded (real bytes). Builds the AST + tables (DATA, DEFFN). */
+  buildProgram(name, entries, patches={}){
+    const lines=[], lineMap=new Map(), data=[], dataStart=new Map(), deffn=new Map();
+    for(const e of entries){
+      const no=e.no; const src = patches[no]!==undefined ? patches[no] : e.src;
+      let stmts;
+      try{ stmts=new Parser(src,this.dialect).parseLine(); }catch(err){ const x=new BasicError(name+' line '+no+': '+err.message); x.line=no; throw x; }
+      const idx=lines.length; lines.push({no, stmts}); lineMap.set(no,idx);
+      stmts.forEach((st,si)=>{
+        if(st.t==='data'){ if(!dataStart.has(no)) dataStart.set(no,data.length); for(const d of st.items) data.push(d); }
+        else if(st.t==='deffn'){ deffn.set(st.n,{li:idx,si:si+1,params:st.params}); }
+      });
+    }
+    return {name, lines, lineMap, data, dataStart, deffn};
+  }
+  /* reads a text listing: "NNN statements" per line, non-printable bytes as \xHH */
+  static parseListing(text){
+    const out=[];
+    for(let raw of text.split('\n')){
+      raw=raw.replace(/\r$/,''); if(!raw||raw[0]==='#') continue;
+      const m=/^(\d+)(.*)$/.exec(raw); if(!m) continue;
+      out.push({no:+m[1], src:m[2].replace(/\\x([0-9a-fA-F]{2})/g,(a,h)=>String.fromCharCode(parseInt(h,16)))});
+    }
+    return out;
+  }
+  static toListing(entries){
+    const esc=t=>t.replace(/[^\x20-\x7e]|\\/g,c=>'\\x'+c.charCodeAt(0).toString(16).padStart(2,'0'));
+    return entries.map(e=>String(e.no).padStart(4,'0')+esc(e.src)).join('\n')+'\n';
+  }
+  compile(name){
+    const src=this.disk.readProgram(name); if(!src) throw new BasicError('unknown program '+name);
+    const hit=this.cache.get(src.key); if(hit && hit.version===src.version) return hit.prog;
+    const prog=this.buildProgram(name, Interp.parseListing(src.text), this.patches?.[name]||{});
+    this.cache.set(src.key,{version:src.version,prog}); return prog;
+  }
+  load(name){
+    this.prog=this.compile(name);
+    this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0;
+    // non-COM variables are cleared by loading (program chaining)
+    for(const k of [...this.nums.keys()]) if(!this.com.has(k)) this.nums.delete(k);
+    for(const k of [...this.strs.keys()]) if(!this.com.has(k)){ this.strs.delete(k); this.slen.delete(k); }
+    for(const k of [...this.arrs.keys()]) if(!this.com.has('('+k)) this.arrs.delete(k);
+  }
+  start(name){
+    this.runId++; this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear();
+    this.T.clear(); this.T.hex('0F'); this.slow=false; this.printDev=this.T; this.listDev=this.T; this.disk.restore();
+    this.load(name); return this.run();
+  }
+  reset(){ this.runId++; }
+  /* ---------- execution ---------- */
+  /* devices: any object with out(byte), cx, cols, at(), atClear(), drawBox() (a Printer, see printer.js) */
+  attach(addr, dev){ this.devices.set(String(addr), dev); }
+  detach(addr){ const d=this.devices.get(String(addr)); this.devices.delete(String(addr)); if(this.printDev===d) this.printDev=this.T; if(this.listDev===d) this.listDev=this.T; }
+  device(addr){ const d=this.devices.get(String(addr)); if(!d) throw new BasicError('no device at address '+addr); return d; }
+  setDialect(id){ this.dialect=_DL.getDialect(id); this.cache.clear(); }
+  curLineNo(){ const L=this.prog.lines[this.li]; return L ? L.no : null; }
+  halt(){ this.haltReq=true; if(this.io.abort) this.io.abort(); }
+  /* run() returns {status:'end'|'stop'|'halt'|'error'|'reset', line, msg}; with reportErrors (game mode) it rethrows errors */
+  async run(){
+    const id=this.runId; let cnt=0; this.vt=0; this.t0=performance.now(); let slice=performance.now(); this.haltReq=false;
+    try{
+      while(id===this.runId){
+        if(this.haltReq){ this.haltReq=false; return {status:'halt', line:this.curLineNo()}; }
+        const r=this.step(); if(r) { await r; this.vt=0; this.t0=performance.now(); }
+        if((++cnt&31)===0){
+          const now=performance.now(), ahead=this.vt/1000-(now-this.t0);
+          if(ahead>3){ await new Promise(r=>setTimeout(r,ahead)); slice=performance.now(); }
+          else if(ahead<-300){ this.vt=0; this.t0=now; }
+          if(now-slice>10){ await new Promise(r=>setTimeout(r,0)); slice=performance.now(); }
+        }
+      }
+      return {status:'reset'};
+    }catch(e){
+      if(e instanceof ProgramEnd) return {status:'end', direct:e.direct};
+      if(e instanceof ProgramStop) return {status:'stop', line:e.line};
+      if(e instanceof ProgramHalt) return {status:'halt', line:this.curLineNo()};
+      const line=this.curLineNo();
+      if(this.returnErrors) return {status:'error', line, msg:e.message||String(e)};
+      console.error(e);
+      if(this.reportErrors){ this.T.at(23,0); this.T.atClear(23,0,80); this.T.print('ERROR '+(line??'?')+': '+(e.message||e).slice(0,60)); }
+      throw e;
+    }
+  }
+  /* ---------- use as an environment: program in memory, RUN, direct statements ---------- */
+  clearVars(){ this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear(); this.curFile=null; }
+  setProgram(entries){ this.prog=this.buildProgram('PROGRAM',entries); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
+  async runFrom(startLine){
+    this.clearVars(); this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false;
+    if(startLine!=null) this.jump(startLine); else { this.li=0; this.si=0; }
+    this.runId++; const r=await this.run(); this.canContinue=(r.status==='stop'||r.status==='halt'); return r;
+  }
+  async continueRun(){ this.runId++; const r=await this.run(); this.canContinue=(r.status==='stop'||r.status==='halt'); return r; }
+  /* direct statement (no line number): runs as a line appended at the end; variables shared with the program */
+  async execDirect(src){
+    const stmts=new Parser(src,this.dialect).parseLine();
+    const saved={prog:this.prog, li:this.li, si:this.si, g:this.gstack, f:this.fstack, dpos:this.dpos};
+    const lines=this.prog.lines.concat([{no:-1,stmts}]); const lineMap=new Map(this.prog.lineMap); lineMap.set(-1,lines.length-1);
+    this.prog={...this.prog, lines, lineMap}; this.dIdx=lines.length-1; this.dFresh=true;
+    this.li=this.dIdx; this.si=0; this.gstack=[]; this.fstack=[]; this.runId++;
+    const res=await this.run();
+    this.dIdx=-1;
+    if(res.status==='end' && !res.direct){ this.canContinue=false; this.prog={...saved.prog}; }   // the program ran to the end
+    else { this.prog=saved.prog; this.li=saved.li; this.si=saved.si; this.gstack=saved.g; this.fstack=saved.f; this.dpos=saved.dpos; }
+    return res;
+  }
+  step(){
+    const L=this.prog.lines[this.li];
+    if(!L){ throw new ProgramEnd(false); }
+    if(this.li===this.dIdx){
+      if(this.si===0 && !this.dFresh) throw new ProgramEnd(false);   // the flow "fell" into the direct line
+      this.dFresh=false;
+      if(this.si>=L.stmts.length) throw new ProgramEnd(true);
+    }
+    if(this.si>=L.stmts.length){ this.li++; this.si=0; return; }
+    const st=L.stmts[this.si++];
+    this.vt+=this.stmtCost*this.speed;
+    return this.exec(st);
+  }
+  jump(n){
+    let idx=this.prog.lineMap.get(n);
+    if(idx===undefined){ idx=this.prog.lines.findIndex(l=>l.no>=n); if(idx<0) throw new BasicError('line '+n+' does not exist'); }
+    this.li=idx; this.si=0;
+  }
+  exec(st){
+    switch(st.t){
+      case 'assign': { const v=this.assignValue(st); for(const lv of st.lvs) this.setLv(lv, v, st.v); return; }
+      case 'if': { const c=this.ev(st.c); const p=(typeof c==='number')?c!==0:(c!==''); const b = p ? st.th : st.el; if(b) return this.exec(b); return; }
+      case 'goto': this.jump(st.n); return;
+      case 'gosub': this.gstack.push({li:this.li,si:this.si}); this.jump(st.n); return;
+      case 'gosubfn': { const d=this.prog.deffn.get(st.n); if(!d) throw new BasicError('DEFFN '+st.n);
+        const vals=st.args.map(a=>this.ev(a)); d.params.forEach((p,k)=>this.setLv({t:'var',name:p}, vals[k]));
+        this.gstack.push({li:this.li,si:this.si}); this.li=d.li; this.si=d.si; return; }
+      case 'return': { if(st.k==='all'){ this.gstack.length=0; this.fstack.length=0; return; }
+        const r=this.gstack.pop(); if(!r) throw new BasicError('RETURN without GOSUB');
+        if(st.k==='clear') return; this.li=r.li; this.si=r.si; return; }
+      case 'for': { const a=this.ev(st.a), b=this.ev(st.b), s=st.st?this.ev(st.st):1;
+        this.setLv({t:'var',name:st.v}, a);
+        const i=this.fstack.findIndex(f=>f.v===st.v); if(i>=0) this.fstack.splice(i,1);
+        this.fstack.push({v:st.v, end:b, step:s, li:this.li, si:this.si}); if(this.fstack.length>200) this.fstack.shift(); return; }
+      case 'next': { let k=this.fstack.length-1;
+        if(st.v){ while(k>=0 && this.fstack[k].v!==st.v) k--; if(k<0) throw new BasicError('NEXT without FOR'); this.fstack.length=k+1; }
+        else if(k<0) throw new BasicError('NEXT without FOR');
+        const f=this.fstack[k]; const v=this.nums.get(f.v)+f.step; this.nums.set(f.v,v);
+        if(f.step>=0 ? v<=f.end : v>=f.end){ this.li=f.li; this.si=f.si; } else this.fstack.pop(); return; }
+      case 'print': return this.doPrint(st);
+      case 'using': { const f=this.str(this.ev(st.f)); const v=this.ev(st.e); const w=(f.match(/#/g)||[]).length;
+        let t=String(Math.round(v)); if(t.length>w) t='*'.repeat(w); this.emit(t.padStart(w,' ')); if(st.nl) this.emit('\r\n'); return; }
+      case 'gio': this.emit(this.str(this.ev(st.e))); return;
+      case 'break': this.vt+=this.breakCost*this.speed; return;
+      case 'select':
+        if(st.kind){ if(st.kind==='PRINT') this.printDev=this.device(st.addr); else if(st.kind==='LIST') this.listDev=this.device(st.addr); return; }
+        this.slow=(st.dev==='P1'); return;
+      case 'keyin': {
+        // KEYIN K$ without line numbers WAITS for a key; with line numbers it does not block (K$ is unchanged if there is no key)
+        if(st.l1==null && st.l2==null) return (async()=>{ const k=await this.io.next(); if(k.abort) throw new ProgramHalt(); this.setLv(st.lv, String.fromCharCode(k.c)); })();
+        const k=this.io.poll(); if(!k) return;
+        this.setLv(st.lv, String.fromCharCode(k.c)); const l=k.sp?st.l2:st.l1; if(l!=null) this.jump(l); return; }
+      case 'linput': return this.doLinput(st);
+      case 'convert': return this.doConvert(st);
+      case 'on': { const k=Math.floor(this.ev(st.e)); const l=st.list[k-1];
+        if(l!=null){ if(st.kind==='gosub') this.gstack.push({li:this.li,si:this.si}); this.jump(l); } return; }
+      case 'restore': this.dpos = st.n==null ? 0 : (this.prog.dataStart.get(st.n) ?? 0); return;
+      case 'read': for(const lv of st.lv){ if(this.dpos>=this.prog.data.length) throw new BasicError('DATA esaurito'); this.setLv(lv,this.prog.data[this.dpos++]); } return;
+      case 'matread': { const a=this.arr(st.name); for(let k=0;k<a.data.length;k++){ if(this.dpos>=this.prog.data.length) throw new BasicError('DATA esaurito');
+          a.data[k]=a.isStr ? this.fit(String(this.prog.data[this.dpos++]),a.len) : this.prog.data[this.dpos++]; } return; }
+      case 'matset': this.arr(st.name).data.fill(st.v); return;
+      case 'matcopy': { const a=this.arr(st.name), b=this.arr(st.src); for(let k=0;k<a.data.length;k++) a.data[k]=b.data[k]; return; }
+      case 'dim': for(const d of st.decl) this.declare(d,st.com); return;
+      case 'load': this.load(st.name); return;
+      case 'limits': { const s = this.disk.status(st.name);
+        st.lv.forEach((lv,k)=>this.setLv(lv, k===st.lv.length-1 ? s : 0)); return; }
+      case 'dc': return this.doDc(st);
+      case 'tran': { const t=this.str(this.ev(st.tb)); let v=this.str(this.ev(st.lv)); let o='';
+        for(const ch of v){ let r=ch; for(let k=0;k+1<t.length;k+=2) if(t[k+1]===ch){ r=t[k]; break; } o+=r; }
+        this.setLv(st.lv,o); return; }
+      case 'stop': throw new ProgramStop(this.curLineNo());
+      case 'data': case 'deffn': case 'nop': return;
+    }
+    throw new BasicError('exec '+st.t);
+  }
+  /* ---------- I/O ---------- */
+  emit(s){
+    const T=this.printDev;
+    for(let i=0;i<s.length;i++) T.out(s.charCodeAt(i));
+    this.vt+=s.length*(T===this.T ? (this.slow?25000:this.byteCost) : this.devByteCost)*this.speed;
+  }
+  doPrint(st){
+    const T=this.printDev;
+    for(const it of st.items){
+      switch(it.k){
+        case 'at': { const r=this.ev(it.a[0]), c=this.ev(it.a[1]);
+          if(it.a.length>2){ T.atClear(r,c,this.ev(it.a[2])); this.vt+=3*this.byteCost*this.speed; } else { T.at(r,c); this.vt+=3*this.byteCost*this.speed; } break; }
+        case 'tab': { // TAB(n) fills with SPACES up to n characters on the line (erases, does not just move the cursor)
+          const n=Math.min(this.ev(it.a), T.cols||80); let k=n-T.cx; while(k-- >0) this.emit(' '); break; }
+        case 'box': { const h=this.ev(it.a), w=this.ev(it.b); const erase=(h<0||w<0||Object.is(h,-0)||Object.is(w,-0));
+          T.drawBox(T.cy,T.cx,Math.abs(h),Math.abs(w),!erase); this.vt+=6*this.byteCost*this.speed; break; }
+        default: { const v=this.ev(it.e);
+          this.emit(typeof v==='number' ? ((v<0?'-':' ')+Math.abs(v)+' ') : this.str(v)); }
+      }
+    }
+    if(st.nl) this.emit('\r\n');
+  }
+  doLinput(st){
+    return (async()=>{
+      let s=''; const lenMax=this.lvLen(st.lv);
+      for(;;){
+        const k=await this.io.next();
+        if(k.abort) throw new ProgramHalt();
+        if(k.sp) continue;
+        if(k.c===13) break;
+        if(k.c===8){ if(s.length){ s=s.slice(0,-1); this.T.out(8); this.T.out(0x20); this.T.out(8); } continue; }
+        if(k.c>=32 && s.length<lenMax){ s+=String.fromCharCode(k.c); this.T.out(k.c); }
+      }
+      this.setLv(st.lv,s); this.emit('\r\n');
+    })();
+  }
+  doConvert(st){
+    const v=this.ev(st.e);
+    if(typeof v==='string'){ this.setLv(st.lv, parseFloat(v.trim())||0); return; }
+    const w=st.pic ? (st.pic.match(/#/g)||[]).length : 0;
+    this.setLv(st.lv, st.pic ? String(Math.round(Math.abs(v))).padStart(w,'0').slice(-w) : String(v));
+  }
+  doDc(st){
+    if(st.op==='open'){ this.curFile=st.name; return; }
+    if(st.op==='load'){ const r=this.disk.readData(this.curFile); const a=this.arr('H$'); if(r) for(let k=0;k<a.data.length&&k<r.length;k++) a.data[k]=this.fit(r[k],a.len); return; }
+    if(st.op==='save'){ this.disk.writeData(this.curFile, this.arr('H$').data.slice()); }
+  }
+  /* ---------- variables ---------- */
+  declare(d,com){
+    const isStr=d.name.endsWith('$');
+    if(d.dims){
+      const size=d.dims.reduce((a,b)=>a*b,1), len=isStr?(d.len||16):0;
+      this.arrs.set(d.name,{dims:d.dims, isStr, len, data: isStr ? new Array(size).fill(' '.repeat(len)) : new Array(size).fill(0)});
+      if(com) this.com.add('('+d.name);
+    } else {
+      if(isStr){ this.slen.set(d.name,d.len||16); this.strs.set(d.name,' '.repeat(d.len||16)); } else this.nums.set(d.name,0);
+      if(com) this.com.add(d.name);
+    }
+  }
+  arr(name){ const a=this.arrs.get(name); if(!a) throw new BasicError('array not dimensioned '+name); return a; }
+  idx(a,subs,name){
+    let k=0;
+    for(let d=0;d<a.dims.length;d++){ const v=Math.floor(this.ev(subs[d])); if(v<0||v>a.dims[d]) throw new BasicError('index '+name+'('+v+')'); k=k*a.dims[d]+Math.max(v-1,0); }
+    return k;
+  }
+  fit(s,len){ s=String(s); return s.length>=len ? s.slice(0,len) : s+' '.repeat(len-s.length); }
+  str(v){ if(typeof v==='string') return v; if(v instanceof AllFill) return String.fromCharCode(v.b); return String(v); }
+  lvLen(lv){
+    if(lv.t==='var') return this.slen.get(lv.name)||16;
+    if(lv.t==='el') return this.arr(lv.name).len;
+    if(lv.t==='str'){ return lv.b ? this.ev(lv.b) : this.lvLen(lv.base); }
+    return 16;
+  }
+  getVar(n){
+    switch(n.t){
+      case 'var': if(n.name.endsWith('$')){ let v=this.strs.get(n.name); if(v===undefined){ const l=this.slen.get(n.name)||16; v=' '.repeat(l); this.strs.set(n.name,v);} return v; }
+        { const v=this.nums.get(n.name); return v===undefined?0:v; }
+      case 'el': { const a=this.arr(n.name); return a.data[this.idx(a,n.subs,n.name)]; }
+    }
+    throw new BasicError('getVar '+n.t);
+  }
+  setLv(lv,v,srcNode){
+    if(srcNode && srcNode.t==='addc') v=this.addc(lv,v);
+    if(lv.t==='var'){
+      if(lv.name.endsWith('$')){ const l=this.slen.get(lv.name)||16; if(!this.slen.has(lv.name)) this.slen.set(lv.name,l);
+        this.strs.set(lv.name, v instanceof AllFill ? String.fromCharCode(v.b).repeat(l) : this.fit(this.str(v),l)); }
+      else this.nums.set(lv.name, typeof v==='number' ? v : parseFloat(v)||0);
+      return;
+    }
+    if(lv.t==='el'){ const a=this.arr(lv.name); const k=this.idx(a,lv.subs,lv.name);
+      a.data[k]= a.isStr ? (v instanceof AllFill ? String.fromCharCode(v.b).repeat(a.len) : this.fit(this.str(v),a.len)) : (typeof v==='number'?v:parseFloat(v)||0); return; }
+    if(lv.t==='arr'){ const a=this.arr(lv.name);
+      if(v instanceof AllFill){ a.data.fill(String.fromCharCode(v.b).repeat(a.len)); }
+      else { const s=this.str(v); for(let k=0;k<a.data.length;k++) a.data[k]=this.fit(s.substr(k*a.len,a.len),a.len); } return; }
+    if(lv.t==='str'){
+      const cur=this.str(this.getVar(lv.base)); const a=lv.a?Math.floor(this.ev(lv.a)):1;
+      const n=lv.b?Math.floor(this.ev(lv.b)):cur.length-a+1;
+      if(a<1||n<=0||a+n-1>cur.length) return;
+      let piece = v instanceof AllFill ? String.fromCharCode(v.b).repeat(n) : this.fit(this.str(v),n);
+      if(srcNode && srcNode.t==='bitop'){ const o=cur.substr(a-1,n); piece=''; const m=v; // v is the byte
+        for(let k=0;k<n;k++){ const x=o.charCodeAt(k); piece+=String.fromCharCode(srcNode.op==='XOR'?x^m:srcNode.op==='OR'?x|m:x&m); } }
+      this.setLv(lv.base, cur.slice(0,a-1)+piece+cur.slice(a-1+n)); return;
+    }
+    throw new BasicError('setLv '+lv.t);
+  }
+  assignValue(st){
+    const v=st.v;
+    if(v.t==='bitop') return this.ev(v.e).charCodeAt(0);     // the byte to combine
+    return this.ev(v);
+  }
+  addc(lv,v){   // 16-bit add with carry (hall of fame checksum)
+    const cur=this.str(this.ev(lv)); const n=((cur.charCodeAt(0)||0)<<8|(cur.charCodeAt(1)||0));
+    const t=(n+(this.str(v).charCodeAt(0)||0))&0xFFFF; return String.fromCharCode(t>>8,t&255);
+  }
+  /* ---------- evaluation ---------- */
+  cmp(op,a,b){
+    let r;
+    if(typeof a==='string'||typeof b==='string'){
+      a=this.str(a); b=this.str(b); const L=Math.max(a.length,b.length); a=a.padEnd(L,' '); b=b.padEnd(L,' ');
+      r = a<b?-1:a>b?1:0;
+    } else r = a<b?-1:a>b?1:0;
+    switch(op){ case '=':return r===0?1:0; case '<>':return r!==0?1:0; case '<':return r<0?1:0; case '>':return r>0?1:0; case '<=':return r<=0?1:0; case '>=':return r>=0?1:0; }
+  }
+  ev(n){
+    switch(n.t){
+      case 'lit': return n.v;
+      case 'var': case 'el': return this.getVar(n);
+      case 'cmp': return this.cmp(n.op,this.ev(n.l),this.ev(n.r));
+      case 'bool': { const a=this.truth(this.ev(n.l)); if(n.op==='AND'){ return a&&this.truth(this.ev(n.r))?1:0; } return a||this.truth(this.ev(n.r))?1:0; }
+      case 'arith': { const a=this.ev(n.l), b=this.ev(n.r);
+        switch(n.op){ case '+': return a+b; case '-': return a-b; case '*': return a*b; case '/': if(b===0) throw new BasicError('DIVISION BY ZERO'); return a/b; case '^': return Math.pow(a,b); } break; }
+      case 'neg': return -this.ev(n.e);
+      case 'cat': return this.str(this.ev(n.l))+this.str(this.ev(n.r));
+      case 'all': return new AllFill(n.b);
+      case 'bin': return String.fromCharCode(Math.floor(this.ev(n.e))&255);
+      case 'strf': { const s=this.str(this.ev(n.e)); let a=n.a?Math.floor(this.ev(n.a)):1; if(a<1) a=1;
+        return n.b ? s.substr(a-1,Math.floor(this.ev(n.b))) : s.substr(a-1); }
+      case 'pos': { const s=this.str(this.ev(n.x)); const y=this.str(this.ev(n.y)); const c=y.length?y[0]:' ';
+        let res=0; for(let k=0;k<s.length;k++){ const kk=n.rev?s.length-1-k:k; if(this.cmp(n.op,s[kk],c)){ res=kk+1; break; } } return res; }
+      case 'addc': return this.ev(n.e);
+      case 'fn': { const a=n.a.map(x=>this.ev(x));
+        switch(n.f){ case 'INT': return Math.floor(a[0]); case 'MOD': return a[0]-Math.floor(a[0]/a[1])*a[1]; case 'MIN': return Math.min(a[0],a[1]);
+          case 'MAX': return Math.max(a[0],a[1]); case 'ABS': return Math.abs(a[0]); case 'RND': return Math.random(); case 'SGN': return Math.sign(a[0]);
+          case 'LEN': return this.str(a[0]).length;
+          case 'SQR': if(a[0]<0) throw new BasicError('SQR OF NEGATIVE'); return Math.sqrt(a[0]);
+          case 'EXP': return Math.exp(a[0]); case 'LOG': if(a[0]<=0) throw new BasicError('LOG OF NON-POSITIVE'); return Math.log(a[0]);
+          case 'SIN': return Math.sin(a[0]); case 'COS': return Math.cos(a[0]); case 'TAN': return Math.tan(a[0]); case 'ATN': return Math.atan(a[0]); } break; }
+      case 'str': return this.ev({t:'strf', e:n.base, a:n.a, b:n.b});   // STR() used as a value
+      case 'arr': throw new BasicError('whole array in expression');
+    }
+    throw new BasicError('ev '+n.t);
+  }
+  truth(v){ return typeof v==='number' ? v!==0 : v!==''; }
+}
+
+if(typeof module!=='undefined') module.exports={Interp,Parser,BasicError,AllFill,ProgramEnd,ProgramStop,ProgramHalt};
+
+/* ================= Program loader =================
+   The page can be built WITHOUT the original UNS-MAN program (it is not distributed). This module extracts the programs
+   the game needs from files the user provides:
+     - text listings named after the program (UNS-MAN.txt, UNS-GAME.txt): one BASIC line per line, bytes as \xHH
+     - Wang disk images (.bs2 raw sectors or .wvd) that contain the programs (read with image.js)
+   collectPrograms(files, wanted) -> { programs: {name: listingText}, missing: [names], notes: [messages] }
+   files: [{name: 'UNS-MAN.txt', bytes: Uint8Array}] */
+const _IMG = (typeof module !== 'undefined') ? require('../engine/src/image.js') : { platterSetFromImage };
+
+function latin1(bytes){
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return s;
+}
+
+function collectPrograms(files, wanted){
+  const programs = {}, notes = [];
+  const wantedUpper = wanted.map(w => w.toUpperCase());
+  for (const f of files) {
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    if (ext === 'bs2' || ext === 'wvd' || ext === 'img') {
+      try {
+        const set = _IMG.platterSetFromImage(f.bytes, f.name);
+        let found = 0;
+        for (const pl of set) for (const info of pl.list()) {
+          const i = wantedUpper.indexOf(info.name.toUpperCase());
+          if (i >= 0 && info.kind === 'program' && !programs[wanted[i]]) { programs[wanted[i]] = pl.get(info.name).text; found++; }
+        }
+        if (!found) notes.push(f.name + ': no ' + wanted.join(' / ') + ' program found on this disk');
+      } catch (e) { notes.push(f.name + ': ' + e.message); }
+    } else {
+      const base = f.name.replace(/[.][^.]*$/, '').toUpperCase();
+      const i = wantedUpper.indexOf(base);
+      if (i >= 0) programs[wanted[i]] = latin1(f.bytes);
+      else notes.push('ignored ' + f.name + ' (expected ' + wanted.map(w => w + '.txt').join(' and ') + ' or a disk image)');
+    }
+  }
+  return { programs, missing: wanted.filter(w => !programs[w]), notes };
+}
+
+if (typeof module !== 'undefined') module.exports = { collectPrograms, latin1 };
+
+/* ================= UNS-MAN web page: audio, keyboard, touch, program loader ================= */
+let actx=null;
+function ding(){
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==='suspended') actx.resume();
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type='square'; o.frequency.value=1000; g.gain.setValueAtTime(0.08,actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,actx.currentTime+0.09);
+    o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+0.1);
+  }catch(e){}
+}
+const io={
+  q:[], waiter:null,
+  poll(){ return this.q.shift()||null; },
+  next(){ if(this.q.length) return Promise.resolve(this.q.shift()); return new Promise(r=>{ this.waiter=r; }); },
+  push(c,sp=false){
+    if(actx&&actx.state==='suspended') actx.resume();
+    const k={c,sp};
+    if(this.waiter){ const w=this.waiter; this.waiter=null; w(k); } else { this.q.push(k); if(this.q.length>6) this.q.shift(); }
+  }
+};
+const SPECIAL={ArrowUp:0x46, ArrowDown:0x45, ArrowRight:0x4C, ArrowLeft:0x4D};   // cursor key codes (translated by the game's $TRAN)
+const render=createCrtRenderer(cv);
+const T=new Terminal(); T.onBell=ding;
+
+/* disk: one platter at address 310 with the two programs; data files (the Hall of Fame) persist in localStorage */
+const disk=new DiskSystem({prefix:'unsman'});
+const platter=disk.mount('310', new Platter('UNS-MAN'));
+const WANTED=['UNS-MAN','UNS-GAME'];
+const SAVED_KEY='unsman:programs';
+function installPrograms(map){ for(const n in map) platter.addProgram(n, map[n]); }
+function haveGame(){ return WANTED.every(n=>platter.has(n)); }
+installPrograms(PROGRAMS);                      // the full build embeds the programs; the loader build has none
+let fromLoader=false;
+if(!haveGame()){                                // loader build: try the copy remembered in this browser
+  try{ const saved=JSON.parse(localStorage.getItem(SAVED_KEY)||'null'); if(saved){ installPrograms(saved); fromLoader=haveGame(); } }catch(e){}
+}
+
+const interp=new Interp(T, io, disk);
+interp.patches={
+  'UNS-MAN':{74:'GOTO 70', 92:'F=0'},          // no disk check / Hall of Fame checksum
+  'UNS-GAME':{1570:'GOTO 1620'}                // ghost "dead end": it stays put instead of stopping the program
+};
+let SPEED={slow:1.5, normal:1, fast:0.65};   // virtual-time multiplier: about 6 / 9 / 14 steps per second
+const spd=document.getElementById('spd');
+spd.onchange=()=>{ interp.speed=SPEED[spd.value]; spd.blur(); };
+function restart(){
+  if(!haveGame()){ showLoader(); return; }
+  interp.reset(); io.q.length=0; io.waiter=null; interp.speed=SPEED[spd.value]; interp.start('UNS-MAN').catch(e=>console.error(e));
+}
+
+/* ---- loader screen (only when the game programs are not embedded) ---- */
+const loaderEl=document.getElementById('loader'), loaderMsg=document.getElementById('loaderMsg'), forgetBtn=document.getElementById('forget');
+function showLoader(msg){ interp.reset(); loaderEl.hidden=false; loaderMsg.textContent=msg||''; }
+async function handleFiles(list){
+  const files=[]; for(const f of list) files.push({name:f.name, bytes:new Uint8Array(await f.arrayBuffer())});
+  const r=collectPrograms(files, WANTED);
+  installPrograms(r.programs);
+  if(!haveGame()){
+    showLoader('Still missing: '+WANTED.filter(n=>!platter.has(n)).join(', ')+(r.notes.length?'\n'+r.notes.join('\n'):''));
+    return;
+  }
+  fromLoader=true; forgetBtn.hidden=false;
+  try{ const o={}; for(const n of WANTED) o[n]=platter.get(n).text; localStorage.setItem(SAVED_KEY, JSON.stringify(o)); }catch(e){}
+  loaderEl.hidden=true; restart();
+}
+document.getElementById('loaderFiles').onchange=e=>{ handleFiles(e.target.files); e.target.value=''; };
+for(const ev of ['dragenter','dragover']) loaderEl.addEventListener(ev,e=>{ e.preventDefault(); loaderEl.classList.add('over'); });
+for(const ev of ['dragleave','drop']) loaderEl.addEventListener(ev,e=>{ e.preventDefault(); loaderEl.classList.remove('over'); });
+loaderEl.addEventListener('drop',e=>{ if(e.dataTransfer&&e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+forgetBtn.hidden=!fromLoader;
+forgetBtn.onclick=()=>{ try{ localStorage.removeItem(SAVED_KEY); }catch(e){} location.reload(); };
+
+addEventListener('keydown',e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey) return;
+  if(!loaderEl.hidden) return;
+  if(e.key==='Escape'){ restart(); return; }
+  if(SPECIAL[e.key]){ io.push(SPECIAL[e.key],true); e.preventDefault(); return; }
+  if(e.key==='Enter'){ io.push(13); e.preventDefault(); return; }
+  if(e.key==='Backspace'){ io.push(8); e.preventDefault(); return; }
+  if(e.target&&e.target.id==='kb') return;         // the on-screen keyboard goes through 'input'
+  if(e.key.length===1){ io.push(e.key.charCodeAt(0)); e.preventDefault(); }
+});
+const kb=document.getElementById('kb');
+kb.addEventListener('input',()=>{ for(const ch of kb.value) io.push(ch.charCodeAt(0)); kb.value=''; });
+document.querySelectorAll('#pad button').forEach(b=>{
+  b.addEventListener('pointerdown',e=>{
+    e.preventDefault(); const k=b.dataset.k;
+    if(k==='KB'){ kb.focus(); return; }
+    if(k==='ENTER') io.push(13); else if(k==='BKSP') io.push(8); else io.push(k.charCodeAt(0));
+  });
+});
+cv.addEventListener('pointerdown',()=>{ if(matchMedia('(pointer:coarse)').matches) kb.focus(); });
+document.getElementById('fs').onclick=()=>{ const d=document.documentElement; (document.fullscreenElement?document.exitFullscreen():d.requestFullscreen&&d.requestFullscreen()); };
+
+let blinkOn=true, lastBlink=true;
+function loop(ts){
+  blinkOn=Math.floor(ts/450)%2===0;
+  if(T.dirty||blinkOn!==lastBlink){ T.dirty=false; lastBlink=blinkOn; render(T,blinkOn); }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+restart();
+
+</script>
+</body>
+</html>

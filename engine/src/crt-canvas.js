@@ -1,4 +1,4 @@
-/* ================= Renderer su canvas (font reale 2236 + effetto fosforo) ================= */
+/* ================= Canvas renderer (real 2236 font + phosphor effect) ================= */
 const glyphCache=new Map();
 function glyphRows(ch,alt,under){
   const key=ch|(alt?128:0)|(under?256:0);
@@ -9,13 +9,13 @@ function glyphRows(ch,alt,under){
     if(block) p = r<2 ? t[8*ch+(r&1)] : r<10 ? t[8*ch+r-2] : t[8*ch+6+(r&1)];
     else p = (r<2||r>=10) ? 0 : t[8*ch+r-2];
     p<<=1;
-    if(block) p |= ((p<<2)&0x200)|((p>>2)&1);   // i blocchi riempiono la cella (come l'hardware)
+    if(block) p |= ((p<<2)&0x200)|((p>>2)&1);   // blocks fill the cell (like the hardware)
     if(under&&ch>=0x10&&r===10) p=0x55<<1;
     g[r]=p;
   }
   glyphCache.set(key,g); return g;
 }
-/* createCrtRenderer(canvas): restituisce render(terminal, blinkOn). Richiede FONT_N/FONT_A (font.js). */
+/* createCrtRenderer(canvas): returns render(terminal, blinkOn). Requires FONT_N/FONT_A (font.js). */
 function createCrtRenderer(cv){
 const ctx=cv.getContext('2d');
 const img=ctx.createImageData(W,H), lum=new Float32Array(W*H);
@@ -35,11 +35,11 @@ return function render(T,blinkOn){
       }
     }
   }
-  // cursore (se acceso): blocco lampeggiante sotto il carattere
+  // cursor (if on): blinking block under the character
   if(T.cursorVisible && blinkOn){
     for(let p=7;p<11;p++) for(let x=0;x<9;x++){ const o=(T.cy*CH+p*2)*W+T.cx*CW+x; lum[o]=1; lum[o+W]=1; }
   }
-  // riquadri (BOX) a intensità normale
+  // boxes (BOX) at normal intensity
   const line=(x0,x1,y0,y1)=>{ for(let y=y0;y<y1&&y<H;y++) for(let x=x0;x<x1&&x<W;x++){ const o=y*W+x; if(lum[o]<0.6) lum[o]=0.6; } };
   for(let r=0;r<=ROWS;r++) for(let c=0;c<COLS;c++){
     const b=T.box[r*COLS+c]; if(!b) continue;

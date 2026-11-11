@@ -7,36 +7,56 @@ virtual disk ("platter") that stores the Hall of Fame.
 
 Runs on desktop and mobile browsers, as a single self-contained HTML file, with no installation.
 
+## Quick start
+
+The original program is **not included** in this repository (see below), so the page you download asks you for your own
+copy the first time.
+
+1. Download **`uns-man-loader.html`** from the [latest release](https://github.com/fpracek/WANG-PACMAN/releases/latest)
+   (it is also in this repository as `app/uns-man-loader.html`).
+2. Open it in a modern browser (double-click the file).
+3. Give it your copy of UNS-MAN, either way:
+   - the two listing files **`UNS-MAN.txt`** and **`UNS-GAME.txt`** (text listings, one BASIC line per line, non-printable
+     bytes written as `\xHH`, as produced by WangEmu's `wvdutil list`), or
+   - a Wang **disk image** (`.bs2` raw sectors or WangEmu `.wvd`) that contains the programs `UNS-MAN` and `UNS-GAME`.
+
+   Use the *Choose files* button or drop the files on the page. They stay in your browser (nothing is uploaded) and are
+   remembered there, so you only do this once; the *forget game* button removes them.
+4. Press `1` or `2` for the number of players, or any other key for the instructions.
+
+Controls: arrow keys or `8` `4` `6` `2` to move, `5` to stop, `Enter` to confirm, `Esc` to restart. Touch devices get
+on-screen buttons. A speed selector is available (the original pace depended only on how slow the interpreter and terminal
+were, so it is adjustable).
+
+## The original program is not included
+
+The header of `UNS-MAN` asks that nobody distributes the program in an unprotected form. For that reason the original
+BASIC listings are **not part of this repository** and are not inside the release files. You need to supply them yourself
+(from a disk image you own, for example). The engine and the web page are not tied to this game: UNS-MAN is simply the
+first program they were built for.
+
+## Build from source
+
+```
+python app/tools/build.py --loader   # app/uns-man-loader.html: no program inside, asks for it (safe to share)
+python app/tools/build.py            # app/index.html: embeds listings/UNS-MAN.txt and listings/UNS-GAME.txt (keep it private)
+```
+
+For the second form put the two listing files in a `listings/` folder (ignored by git) or point the `LISTINGS`
+environment variable to the folder that contains them. Tests (Node):
+
+```
+node engine/test/shell.js          # interactive-prompt tests
+node app/test/loader.js            # the program loader (listings and disk images)
+node engine/test/parse-uns.js      # parser tests on the original listings (needs the listings)
+```
+
 ## What is in this repository
 
 | Folder | Contents |
 |---|---|
-| `engine/` | **BASIC2-JS** - the reusable BASIC-2 interpreter, platter (virtual disk) system, Wang terminal model/renderer and an interactive BASIC-2 prompt (`Workstation`). See [`engine/README.md`](engine/README.md). |
-| `app/` | The web page (`template.html`, `app.js`) and the build script that produces a single `index.html`. |
-
-### The original program is not included
-
-The header of `UNS-MAN` asks that nobody distributes the program in an unprotected form. For that reason the original
-BASIC listings are **not part of this repository**. To build the game you must supply `UNS-MAN.txt` and
-`UNS-GAME.txt` yourself (text listings, one BASIC line per line, non-printable bytes written as `\xHH`), either in a
-`listings/` folder or through the `LISTINGS` environment variable. The engine and the app are not tied to this game:
-UNS-MAN is simply the first program they were built for.
-
-## Build and run
-
-```
-python app/tools/build.py          # produces app/index.html (a single file, not versioned)
-node engine/test/shell.js          # interactive-prompt tests (no listings needed)
-node engine/test/parse-uns.js      # parser tests on the original listings (needs the listings)
-```
-
-Open `app/index.html` in a browser.
-
-## Controls
-
-Arrow keys or `8` `4` `6` `2` to move, `5` to stop, `1` / `2` to choose the number of players, `Enter` to confirm,
-`Esc` to restart. Touch devices get on-screen buttons. A speed selector is available (the original pace depended only
-on how slow the interpreter and terminal were, so it is adjustable).
+| `engine/` | **BASIC2-JS**: the BASIC-2 interpreter, platter (virtual disk) system, disk-image reader, Wang terminal model/renderer, printer with PDF output and an interactive BASIC-2 prompt (`Workstation`). See [`engine/README.md`](engine/README.md); the engine also lives in its own repository, [WANG-BASIC2](https://github.com/fpracek/WANG-BASIC2). |
+| `app/` | The web page (`template.html`, `app.js`, `loader.js`), the build script and the loader build `uns-man-loader.html`. |
 
 ## How it works
 
