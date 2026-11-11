@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>UNS-MAN</title>
+<style>
+:root{--bg:#050a06;--fg:#7dff8a;--dim:#2f7a3a;--btn:#0e1f12}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:ui-monospace,Consolas,monospace;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%;padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+#top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;font-size:13px;color:var(--dim)}
+#top label{display:flex;align-items:center;gap:6px}
+#top select,#top button{background:var(--btn);color:var(--fg);border:1px solid var(--dim);border-radius:6px;padding:4px 8px;font:inherit}
+#stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+canvas{max-width:100%;max-height:100%;aspect-ratio:800/550;width:auto;height:auto;background:#000;border-radius:10px;box-shadow:0 0 40px #0a3a1255}
+#pad{display:none;padding:10px 0 14px;gap:8px;flex-direction:column}
+#pad .row{display:flex;gap:8px;justify-content:center}
+#pad button{flex:1;max-width:96px;min-height:50px;font:600 17px ui-monospace,Consolas,monospace;background:var(--btn);color:var(--fg);border:1px solid var(--dim);border-radius:10px}
+#pad button:active{background:var(--dim);color:#000}
+#pad .sp{visibility:hidden}
+@media (hover:none),(pointer:coarse){#pad{display:flex}#hint{display:none}}
+#hint{font-size:12px;color:var(--dim);text-align:center;padding-bottom:8px}
+#kb{position:fixed;left:-100px;top:0;width:1px;height:1px;opacity:0}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <span>UNS-MAN · Wang 2200 · Steve McGarry 1981</span>
+    <span><label>speed <select id="spd"><option value="slow">slow</option><option value="normal" selected>normal</option><option value="fast">fast</option></select></label>
+    <button id="fs">fullscreen</button></span>
+  </div>
+  <div id="stage"><canvas id="cv" width="800" height="550"></canvas></div>
+  <div id="hint">Arrows or 8·4·6·2 move · 5 stop · 1 / 2 players · Enter confirm · Esc restart</div>
+  <div id="pad">
+    <div class="row"><button class="sp"></button><button data-k="8">▲</button><button class="sp"></button><button data-k="1">1</button><button data-k="2">2</button></div>
+    <div class="row"><button data-k="4">◀</button><button data-k="5">■</button><button data-k="6">▶</button><button data-k="ENTER">ENTER</button><button data-k="KB">⌨</button></div>
+    <div class="row"><button class="sp"></button><button data-k="2">▼</button><button class="sp"></button><button data-k="BKSP">⌫</button><button class="sp"></button></div>
+  </div>
+  <input id="kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+</div>
+<script>
+/*FONT*/
+/*PROGS*/
+</script>
+<script>
+"use strict";
+/*TERMINAL*/
+/*INTERP*/
+/*APP*/
+</script>
+</body>
+</html>
