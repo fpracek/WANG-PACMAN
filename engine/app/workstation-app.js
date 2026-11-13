@@ -180,20 +180,35 @@ $('newDisk').onclick=()=>{
   let n=330; while(disk.drives.has(String(n))) n+=10;
   disk.mount(String(n), new Platter(label.toUpperCase()||'DISK')); selDrive=String(n); refreshDisks();
 };
-async function readLatin1(file){ return new TextDecoder('latin1').decode(await file.arrayBuffer()); }
-$('importFile').onchange=async e=>{
-  const f=e.target.files[0]; if(!f) return; const text=await readLatin1(f);
-  const name=f.name.replace(/[.][^.]*$/,'').toUpperCase();
-  const p=disk.drives.get(selDrive); if(p.readOnly){ alert('Drive '+selDrive+' is read-only. Select a writable drive (310 or 320).'); e.target.value=''; return; }
-  p.putProgram(name,text); disk.persist(); selFile=name; e.target.value=''; refreshDisks();
-};
-$('imageFile').onchange=async e=>{
-  for(const f of e.target.files){
-    try{ const used=disk.mountImage(new Uint8Array(await f.arrayBuffer()), f.name); selDrive=used[0]; selFile=null; }
-    catch(err){ alert('Cannot read '+f.name+': '+err.message); }
+/* Both file buttons ("Import listing" and "Mount disk image") accept either kind of file: what the file really is
+   decides what happens, so choosing a disk image in the wrong place never loads garbage as a program. */
+function latin1Text(bytes){ let s=''; for(let i=0;i<bytes.length;i+=8192) s+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192)); return s; }
+async function addFile(f){
+  const bytes=new Uint8Array(await f.arrayBuffer());
+  if(isDiskImage(bytes)){
+    try{
+      const used=disk.mountImage(bytes, f.name); selDrive=used[0]; selFile=null; refreshDisks();
+      if(!/[.](bs2|wvd|img)$/i.test(f.name)) alert(f.name+' is a disk image, so it was mounted (read-only) as drive '+used.join(', ')+'. Type CATALOG '+used[0]+' to see its files.');
+    }catch(err){ alert('Cannot read '+f.name+': '+err.message); }
+    return;
   }
-  e.target.value=''; refreshDisks();
-};
+  const text=latin1Text(bytes);
+  if(Interp.parseListing(text).length===0){
+    alert('No BASIC lines found in '+f.name+'.\n\nA listing has one BASIC line per text line, starting with the line number (for example: 10 PRINT "HI"). '
+      +'Wang disk images (.bs2 / .wvd) are recognised automatically.');
+    return;
+  }
+  let p=disk.drives.get(selDrive);
+  if(p.readOnly){                                   // a mounted image is read-only: the listing goes to the first writable drive
+    const addr=[...disk.drives.keys()].find(a=>!disk.drives.get(a).readOnly && a!=='310') || [...disk.drives.keys()].find(a=>!disk.drives.get(a).readOnly);
+    if(!addr){ alert('No writable drive to put the listing on.'); return; }
+    selDrive=addr; p=disk.drives.get(addr);
+  }
+  const name=f.name.replace(/[.][^.]*$/,'').toUpperCase();
+  p.putProgram(name,text); disk.persist(); selFile=name; refreshDisks();
+}
+$('importFile').onchange=async e=>{ for(const f of e.target.files) await addFile(f); e.target.value=''; };
+$('imageFile').onchange=async e=>{ for(const f of e.target.files) await addFile(f); e.target.value=''; };
 $('eject').onclick=()=>{
   const p=disk.drives.get(selDrive);
   if(p&&p.image&&confirm('Eject '+p.label+' from drive '+selDrive+'?')){ disk.unmount(selDrive); if(!disk.drives.has(disk.current)) disk.select('310'); selDrive='310'; selFile=null; refreshDisks(); }

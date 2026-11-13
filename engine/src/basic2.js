@@ -15,7 +15,7 @@ class ProgramEnd { constructor(direct){ this.direct=!!direct; } }
 class ProgramStop { constructor(line){ this.line=line; } }
 class ProgramHalt { constructor(){} }
 
-const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','LET','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
+const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','INPUT','LET','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
   'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','LOAD','REM',
   '$GIO/005(A000)','$BREAK','$TRAN'];
 const NUMFN = ['INT','MOD','MIN','MAX','ABS','RND','SGN','LEN','SQR','EXP','LOG','SIN','COS','TAN','ATN'];
@@ -36,7 +36,8 @@ class Parser {
     for(;;){
       this.ws(); if(this.i>=this.s.length) break;
       if(this.s[this.i]===':'){ this.i++; continue; }
-      const st=this.parseStatement(); if(st) out.push(st);
+      const from=this.i; const st=this.parseStatement(); if(st) out.push(st);
+      if(this.i<=from) this.err('statement not understood');
       this.ws();
       if(this.i<this.s.length && this.s[this.i]!==':') this.err('unexpected statement');
     }
@@ -70,7 +71,7 @@ class Parser {
           return {t:'gosubfn', n, args}; }
         return {t:'gosub', n:this.lineNo()}; }
       case 'RETURN': { let k='one'; if(this.eat('CLEAR')){ k = this.eat('ALL') ? 'all' : 'clear'; } return {t:'return', k}; }
-      case 'RESTORE': { let n=null; if(this.eat('LINE')) n=this.lineNo(); return {t:'restore', n}; }
+      case 'RESTORE': { let n=null, k=null; if(this.eat('LINE')){ n=this.lineNo(); if(this.eat(',')) k=this.expr(); } return {t:'restore', n, k}; }
       case 'READ': { const lv=[]; do{ lv.push(this.lvalue()); } while(this.eat(',')); return {t:'read', lv}; }
       case 'DATA': return this.dataStmt();
       case 'MAT': return this.mat();
@@ -80,6 +81,8 @@ class Parser {
       case 'KEYIN': { const lv=this.lvalue(); let l1=null,l2=null; if(this.eat(',')){ l1=this.lineNo(); if(this.eat(',')) l2=this.lineNo(); }
         return {t:'keyin', lv, l1, l2}; }
       case 'LET': return this.assign();
+      case 'INPUT': { this.ws(); let prompt=null; if(s[this.i]==='"'){ prompt=this.expr(); this.ws(); if(s[this.i]===';'||s[this.i]===',') this.i++; }
+        const lv=[]; do{ lv.push(this.lvalue()); } while(this.eat(',')); return {t:'input', prompt, lv}; }
       case 'LINPUT': { this.need('linput','LINPUT'); this.ws(); while(s[this.i]==='-'||s[this.i]==='?') this.i++; return {t:'linput', lv:this.lvalue()}; }
       case 'DIM': case 'COM': return {t:'dim', com:kw==='COM', decl:this.decls()};
       case 'ON': { const e=this.expr(); const kind=this.eat('GOTO')?'goto':(this.expect('GOSUB'),'gosub'); const list=[];
@@ -87,13 +90,15 @@ class Parser {
           if(!this.eat(',')) break; }
         return {t:'on', e, kind, list}; }
       case 'STOP': { this.ws(); if(s[this.i]==='"') this.i=s.indexOf('"',this.i+1)+1; return {t:'stop'}; }
-      case 'LOAD': { this.ws(); if(s[this.i]==='T') this.i++; this.ws(); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1; return {t:'load', name}; }
+      case 'LOAD': { this.ws(); if(s.startsWith('RUN',this.i)){ this.i+=3; return {t:'loadrun'}; }
+        if(s[this.i]==='T') this.i++; this.ws(); if(s[this.i]!=='"') this.err('file name expected'); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1; return {t:'load', name}; }
       case 'SELECT': { this.ws(); const rest=s.slice(this.i);
         const m2=/^(PRINT|LIST|CO|INPUT|CI)\s*\/?(\d{3})/.exec(rest) || /^(P)\s+\/?(\d{3})/.exec(rest);
         if(m2){ this.i+=m2[0].length; while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'select', kind:(m2[1]==='P'?'PRINT':m2[1]), addr:m2[2]}; }
         const m=/^P(\d?)/.exec(rest); let dev='P'; if(m) dev='P'+m[1];
         while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'select', dev}; }
       case 'DEFFN': { this.ws(); if(s[this.i]==="'"){ this.i++; const n=this.lineNo(); const params=[];
+          this.ws();
           if(s[this.i]==='('){ this.i++; do{ params.push(this.varName()); } while(this.eat(',')); this.expect(')'); }
           else this.i=s.length;                         // DEFFN'31"..." : function key, ignored
           return {t:'deffn', n, params}; } this.i=s.length; return null; }
@@ -112,6 +117,7 @@ class Parser {
     const items=[]; let nl=true; const s=this.s;
     for(;;){
       this.ws(); if(this.i>=s.length || s[this.i]===':' || s.startsWith('ELSE',this.i)) break;
+      if(s[this.i]===';'||s[this.i]===','){ this.i++; nl=false; continue; }     // tolerate an empty item (";;")
       nl=true;
       if(this.eat('AT(')){ this.need('printAt','AT('); const a=[this.expr()]; while(this.eat(',')) a.push(this.expr()); this.expect(')'); items.push({k:'at', a}); }
       else if(this.eat('TAB(')){ const a=this.expr(); this.expect(')'); items.push({k:'tab', a}); }
@@ -199,6 +205,7 @@ class Parser {
       this.ws(); const s=this.s; let op=null;
       for(const o of ['<>','<=','>=','=','<','>']) if(s.startsWith(o,this.i)){ op=o; break; }
       if(!op) return l;
+      if(op==='<>' && s[this.i+2]==='=') this.i++;          // some listings contain "<>=": same meaning as "<>"
       this.i+=op.length; l={t:'cmp', op, l, r:this.add()};
     }
   }
@@ -270,10 +277,26 @@ class Interp {
     return {name, lines, lineMap, data, dataStart, deffn};
   }
   /* reads a text listing: "NNN statements" per line, non-printable bytes as \xHH */
+  /* WangEmu's `wvdutil listd` pretty-prints: lines are wrapped at 78 columns ("     " + rest) and every statement after
+     a colon starts a new line ("   : stmt"). Join them back. When a wrap fell exactly on a space the space is lost: a physical
+     line of 77 characters followed by a continuation had its next character dropped, so it is restored. */
+  static joinListd(lines){
+    const out=[]; let lastLen=0;
+    for(const raw of lines){
+      if(!raw) continue;
+      if(raw[0]==='#' || /^\d/.test(raw)){ out.push(raw); lastLen=raw.length; continue; }
+      const i=out.length-1; if(i<0 || out[i][0]==='#') continue;
+      let m=/^ {3}: ?(.*)$/.exec(raw);
+      if(m){ out[i]+=':'+m[1]; lastLen=raw.length; continue; }
+      m=/^ {5}(.*)$/.exec(raw);
+      if(m){ out[i]+=(lastLen===77?' ':'')+m[1]; lastLen=raw.length; }
+    }
+    return out;
+  }
   static parseListing(text){
     const out=[];
-    for(let raw of text.split('\n')){
-      raw=raw.replace(/\r$/,''); if(!raw||raw[0]==='#') continue;
+    for(let raw of Interp.joinListd(text.split('\n').map(r=>r.replace(/\r$/,'')))){
+      if(!raw||raw[0]==='#') continue;
       const m=/^(\d+)(.*)$/.exec(raw); if(!m) continue;
       out.push({no:+m[1], src:m[2].replace(/\\x([0-9a-fA-F]{2})/g,(a,h)=>String.fromCharCode(parseInt(h,16)))});
     }
@@ -412,17 +435,22 @@ class Interp {
         const k=this.io.poll(); if(!k) return;
         this.setLv(st.lv, String.fromCharCode(k.c)); const l=k.sp?st.l2:st.l1; if(l!=null) this.jump(l); return; }
       case 'linput': return this.doLinput(st);
+      case 'input': return this.doInput(st);
       case 'convert': return this.doConvert(st);
       case 'on': { const k=Math.floor(this.ev(st.e)); const l=st.list[k-1];
         if(l!=null){ if(st.kind==='gosub') this.gstack.push({li:this.li,si:this.si}); this.jump(l); } return; }
-      case 'restore': this.dpos = st.n==null ? 0 : (this.prog.dataStart.get(st.n) ?? 0); return;
-      case 'read': for(const lv of st.lv){ if(this.dpos>=this.prog.data.length) throw new BasicError('DATA esaurito'); this.setLv(lv,this.prog.data[this.dpos++]); } return;
-      case 'matread': { const a=this.arr(st.name); for(let k=0;k<a.data.length;k++){ if(this.dpos>=this.prog.data.length) throw new BasicError('DATA esaurito');
+      case 'restore': { let p0 = st.n==null ? 0 : (this.prog.dataStart.get(st.n) ?? 0); if(st.k) p0 += Math.max(0, Math.floor(this.ev(st.k))-1); this.dpos=p0; return; }
+      case 'read': for(const lv of st.lv){ if(this.dpos>=this.prog.data.length) throw new BasicError('out of DATA'); this.setLv(lv,this.prog.data[this.dpos++]); } return;
+      case 'matread': { const a=this.arr(st.name); for(let k=0;k<a.data.length;k++){ if(this.dpos>=this.prog.data.length) throw new BasicError('out of DATA');
           a.data[k]=a.isStr ? this.fit(String(this.prog.data[this.dpos++]),a.len) : this.prog.data[this.dpos++]; } return; }
       case 'matset': this.arr(st.name).data.fill(st.v); return;
       case 'matcopy': { const a=this.arr(st.name), b=this.arr(st.src); for(let k=0;k<a.data.length;k++) a.data[k]=b.data[k]; return; }
       case 'dim': for(const d of st.decl) this.declare(d,st.com); return;
       case 'load': this.load(st.name); return;
+      case 'loadrun':   // LOAD RUN: start the program again from its first line, with clean variables
+        if(this.disk.status(this.prog.name)===1) this.load(this.prog.name);
+        else { this.clearVars(); this.gstack=[]; this.fstack=[]; this.dpos=0; this.li=0; this.si=0; }
+        return;
       case 'limits': { const s = this.disk.status(st.name);
         st.lv.forEach((lv,k)=>this.setLv(lv, k===st.lv.length-1 ? s : 0)); return; }
       case 'dc': return this.doDc(st);
@@ -455,6 +483,31 @@ class Interp {
       }
     }
     if(st.nl) this.emit('\r\n');
+  }
+  /* read one line from the keyboard with echo; Enter ends it. Throws ProgramHalt when interrupted. */
+  async readLine(lenMax){
+    let s='';
+    for(;;){
+      const k=await this.io.next();
+      if(k.abort) throw new ProgramHalt();
+      if(k.sp) continue;
+      if(k.c===13) break;
+      if(k.c===8){ if(s.length){ s=s.slice(0,-1); this.T.out(8); this.T.out(0x20); this.T.out(8); } continue; }
+      if(k.c>=32 && s.length<lenMax){ s+=String.fromCharCode(k.c); this.T.out(k.c); }
+    }
+    this.emit('\r\n');
+    return s;
+  }
+  /* INPUT: shows the prompt ("?" if none), reads one line per variable; an unreadable number leaves the variable unchanged */
+  doInput(st){
+    return (async()=>{
+      this.emit(st.prompt ? this.str(this.ev(st.prompt)) : '?');
+      for(const lv of st.lv){
+        const isStr = (lv.t==='var'||lv.t==='el') ? lv.name.endsWith('$') : true;
+        const s=await this.readLine(isStr ? this.lvLen(lv) : 24);
+        if(isStr) this.setLv(lv,s); else { const v=parseFloat(s); if(!isNaN(v)) this.setLv(lv,v); }
+      }
+    })();
   }
   doLinput(st){
     return (async()=>{

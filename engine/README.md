@@ -6,6 +6,39 @@ listings unchanged: the first client is `UNS-MAN` (Steve McGarry's 1981 Pac-Man 
 two optional patches for lines that touch hardware. That game lives in its own repository,
 [WANG-PACMAN](https://github.com/fpracek/WANG-PACMAN); its original listing is not distributed anywhere here.
 
+## Quick start
+
+### Run the Workstation (no installation)
+
+1. Download **`workstation.html`** from the [latest release](https://github.com/fpracek/WANG-BASIC2/releases/latest)
+   (it is also in this repository as `dist/workstation.html`).
+2. Open it in a modern browser (double-click). It is a single self-contained file; nothing is sent anywhere.
+3. You get a Wang-style green screen with a BASIC-2 prompt. Try:
+
+```
+10 FOR I=1 TO 5:PRINT "LINE";I:NEXT I
+RUN
+LOAD "PRIMES"
+RUN
+LIST
+```
+
+Things to try next: `CATALOG` (disk 310 holds samples: `HELLO`, `PRIMES`, `BOXES`, `GUESS`), `SAVE "MINE"`,
+`HELP`, `DIALECT` (choose the BASIC version), Esc (HALT a running program), the **Editor** tab (edit a program as text),
+the **Disks** tab (**Mount disk image** loads a `.bs2` or `.wvd` disk read-only) and the **Printers** tab
+(`SELECT PRINT 215` then `RUN` prints to a virtual printer; **Download PDF** saves the output).
+
+### Use it from JavaScript / Node
+
+```js
+const { Workstation } = require('./src/shell.js'), { Platter, DiskSystem } = require('./src/platter.js');
+const { Terminal } = require('./src/wangcrt.js');
+// terminal, keyboard {next(), poll()} and a DiskSystem are passed in: see "Architecture" below
+```
+
+Run the tests with `node test/shell.js` (and the others listed under *Tests*). Rebuild the single-file page with
+`python tools/build-workstation.py`.
+
 ## Architecture
 
 ```
@@ -107,8 +140,14 @@ Up/down arrows recall the command history; `ws.halt()` interrupts a running prog
 emulated CRT with the BASIC-2 prompt and four panels/controls:
 
 - **BASIC** selector (header): the dialect profile (see below).
-- **Disks**: drives, catalog, load / export / delete, import a text listing, new disk, export / import a whole disk as
-  JSON, and **Mount disk image** for `.bs2` / `.wvd` files (read-only, with Eject).
+- **Disks**: drives, catalog, load / export / delete, **Import listing**, new disk, export / import a whole disk as
+  JSON, and **Mount disk image** for `.bs2` / `.wvd` files (read-only, with Eject). Import accepts listings in both
+  WangEmu formats: `wvdutil list` (one line per BASIC line) and the pretty-printed `listd` (lines wrapped at 78 columns,
+  each statement after a colon on its own line); the continuation lines are joined back automatically, including the
+  space that `listd` loses when a wrap falls exactly on one. Prefer `list` when you can: it is exact.
+  Both file buttons recognise what the file really is: a disk image chosen in **Import listing** is mounted instead of being
+  loaded as one line of garbage, and a listing chosen in **Mount disk image** is imported. A file with no BASIC lines gets an
+  explanation. When a name exists on several drives, the current drive wins: `SELECT DISK 330` first.
 - **Printers**: one card per printer (columns, paper, greenbar), text preview and **Download PDF**; add more printers.
 - **Editor**: edit the program as text, send it to the workstation, run it.
 
@@ -137,8 +176,8 @@ recorded in the profile `notes`.
 
 Statements: `REM` (and `%`), `DIM`, `COM`, implicit `LET` (also multiple `A,B=0` and `STR(..)=`), `IF..THEN..ELSE`,
 `FOR/NEXT [STEP]`, `GOTO`, `GOSUB`/`RETURN [CLEAR [ALL]]`, `ON..GOTO/GOSUB`, `DEFFN'n` + `GOSUB 'n(..)`,
-`DATA`/`READ`/`RESTORE [LINE n]`, `MAT ZER/CON/copy/READ`, `PRINT` (`AT`, `AT(r,c,n)`, `TAB`, `BOX`, `HEX`, `;`),
-`PRINTUSING`, `KEYIN`, `LINPUT`, `CONVERT`, `LOAD T"name"` (chaining with `COM` variables), `LIMITS`,
+`DATA`/`READ`/`RESTORE [LINE n[,k]]`, `MAT ZER/CON/copy/READ`, `PRINT` (`AT`, `AT(r,c,n)`, `TAB`, `BOX`, `HEX`, `;`),
+`PRINTUSING`, `KEYIN`, `LINPUT`, `INPUT`, `CONVERT`, `LOAD T"name"` (chaining with `COM` variables), `LOAD RUN`, `LIMITS`,
 `DATA LOAD/SAVE DC` (on platters), `SELECT`, `STOP`, `$GIO/005`, `$BREAK`, `$TRAN`.
 Functions: `INT MOD MIN MAX ABS RND SGN LEN SQR EXP LOG SIN COS TAN ATN POS STR HEX ALL BIN ADDC`; operators
 `+ - * / ^ &`, relational, `AND OR`.
@@ -169,13 +208,14 @@ Semantics that matter (found on real listings):
 4. Error codes (`ERR nn`), `ON ERROR`.
 5. Devices: serial, several terminals, printer control codes and fonts; `SELECT` for devices other than PRINT/LIST is a no-op.
 6. Numbers: 13-digit decimal arithmetic (currently `double`), full `PRINTUSING` pictures.
-7. Missing statements: `INPUT`, `MAT` arithmetic / `INV` / `TRN`, `REDIM`, `$PACK/$UNPACK`, string functions (`VAL`, `NUM`).
+7. Missing statements: `INPUT` with formats and several prompts, `MAT` arithmetic / `INV` / `TRN`, `REDIM`, `$PACK/$UNPACK`, string functions (`VAL`, `NUM`).
 
 ## Tests
 
 ```
 node test/shell.js          # the prompt: entering lines, LIST, RUN, STOP/CONTINUE/HALT, SAVE/LOAD/CATALOG, errors
 node test/guess.js          # LINPUT inside a running program (no keystroke is lost)
+node test/listd.js          # pretty-printed (listd) listings, INPUT, LOAD RUN, RESTORE LINE n,k, <>=, ";;", DEFFN with a space
 node test/dialects.js       # what each dialect accepts, REM $PC, the DIALECT command
 node test/image.js          # disk images built in memory: .bs2 and .wvd, catalog, tokenized programs, mounting
 node test/printing.js       # SELECT PRINT / SELECT LIST routing, form feed, PDF output

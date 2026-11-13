@@ -189,4 +189,12 @@ function platterSetFromImage(bytes, fileName){
   return splitImage(bytes, fileName).map(d => platterFromSectors(d.label, d.sectors));
 }
 
-if (typeof module !== 'undefined') module.exports = { TOKENS, unscrambleSector, listProgramRecord, readCatalog, programText, splitImage, platterFromSectors, platterSetFromImage, DiskImageError };
+/* true when the bytes are a Wang disk image (a .wvd with its WANG header, or raw sectors with a valid catalog in sector 0)
+   rather than a text listing. Lets the user choose a disk in the "wrong" file button without loading garbage as a program. */
+function isDiskImage(bytes) {
+  if (!bytes || bytes.length < 512) return false;
+  if (bytes[0] === 0x57 && bytes[1] === 0x41 && bytes[2] === 0x4E && bytes[3] === 0x47 && bytes[4] === 0) return true;     // "WANG\0"
+  try { return readCatalog(splitImage(bytes, 'x')[0].sectors).files.length > 0; } catch (e) { return false; }
+}
+
+if (typeof module !== 'undefined') module.exports = { TOKENS, unscrambleSector, listProgramRecord, readCatalog, programText, splitImage, platterFromSectors, platterSetFromImage, isDiskImage, DiskImageError };

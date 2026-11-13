@@ -1,6 +1,7 @@
 // Disk images (.bs2 raw sectors and .wvd) built in memory: catalog, tokenized program, data file, mounting, LOAD/RUN.
 const { Workstation } = require('../src/shell.js'), { Platter, DiskSystem } = require('../src/platter.js'), { Terminal } = require('../src/wangcrt.js');
-const { platterSetFromImage, readCatalog, splitImage, listProgramRecord } = require('../src/image.js');
+const { platterSetFromImage, readCatalog, splitImage, listProgramRecord, isDiskImage } = require('../src/image.js');
+const { Interp } = require('../src/basic2.js');
 let fail = 0; const expect = (name, cond) => { console.log((cond ? '  ok  ' : 'FAIL  ') + name); if (!cond) fail++; };
 
 const enc = s => Array.from(s).map(c => c.charCodeAt(0));
@@ -37,6 +38,15 @@ expect('program is detokenized', /^10PRINT "HI"$/m.test(text) && /^20FOR I=1TO 2
 expect('header comment carries the file name', /# Sector 1, program filename = 'HELLO'/.test(text));
 const [pw] = platterSetFromImage(wvd, 'T.wvd');
 expect('.wvd: label from the header, same files', pw.label === 'TEST DISK' && pw.list().length === 2 && pw.get('HELLO').text === text.replace('Sector 1', 'Sector 1'));
+
+// what a file is decides what the UI does with it (a disk chosen in "Import listing" must not load as one garbage line)
+expect('a raw .bs2 is recognised as a disk image', isDiskImage(bs2));
+expect('a .wvd is recognised as a disk image', isDiskImage(wvd));
+const listing = new TextEncoder().encode('10 PRINT "HI"\n20 GOTO 10\n'.repeat(40));
+expect('a text listing is not a disk image', !isDiskImage(listing) && Interp.parseListing(Buffer.from(listing).toString('latin1')).length === 80);
+const noise = new Uint8Array(4096).map((_, i) => (i * 37 + 11) & 255); noise[0] = 0x77;
+expect('random bytes are neither an image nor a listing', !isDiskImage(noise) && Interp.parseListing(Buffer.from(noise).toString('latin1')).length === 0);
+expect('tiny files are not images', !isDiskImage(new Uint8Array(100)) && !isDiskImage(null));
 
 // scrambled records are not mistaken for plain text: control byte pattern 0x1x with bit 7 of byte 1 clear
 const plain = listProgramRecord(sector([0x00, 0xFF, 0x00, 0x10, 0xA2, ...enc('X'), 0x0D, 0, 0, 0xFD]), 7);
