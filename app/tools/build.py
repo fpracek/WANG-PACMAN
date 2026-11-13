@@ -34,7 +34,7 @@ parts = {
     '/*FONT*/':     read(lib / 'font.js'),
     '/*PROGS*/':    'const PROGRAMS=' + json.dumps(progs) + ';\n',
     '/*TERMINAL*/': read(lib / 'wangcrt.js') + '\n' + read(lib / 'crt-canvas.js'),
-    '/*INTERP*/':   read(lib / 'dialects.js') + '\n' + read(lib / 'platter.js') + '\n' + read(lib / 'image.js') + '\n' + read(lib / 'basic2.js'),
+    '/*INTERP*/':   read(lib / 'compat.js') + '\n' + read(lib / 'dialects.js') + '\n' + read(lib / 'platter.js') + '\n' + read(lib / 'image.js') + '\n' + read(lib / 'basic2.js'),
     '/*APP*/':      read(app / 'loader.js') + '\n' + read(app / 'app.js'),
 }
 t = read(app / 'template.html')

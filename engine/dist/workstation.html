@@ -425,6 +425,23 @@ class Printer {
 
 if(typeof module!=='undefined') module.exports={Printer};
 
+/* ================= Compatibility patches, by program name =================
+   Some programs use statements this engine does not model. A patch replaces ONE line (by number) with a statement of ours
+   that has the same effect in the web environment. The table is keyed by program name (as stored on the disk) and is applied
+   whenever a program of that name is compiled: a LOAD/RUN typed in the workstation, or a chained LOAD T"name" from a program.
+   The replacement statements are our own code; no original listing text is stored here. */
+const COMPAT = {
+  'UNS-MAN':  { 74: 'GOTO 70', 92: 'F=0' },
+  'UNS-GAME': { 1570: 'GOTO 1620' },
+};
+
+/* "UNS-MAN_listd.txt" / "UNS-MAN (1).txt" -> "UNS-MAN" */
+function programNameFromFile(fileName){
+  return fileName.replace(/[.][^.]*$/, '').toUpperCase().replace(/\s*\(\d+\)\s*$/, '').replace(/[ _.-]*(LISTD|LIST|LST)$/, '').trim();
+}
+
+if (typeof module !== 'undefined') module.exports = { COMPAT, programNameFromFile };
+
 /* ================= Dialect profiles: which "BASIC-2" are we running? =================
    Many versions of Wang BASIC exist, from the original 2200 BASIC to Niakwa's BASIC-2C compiler. A profile tells
    the interpreter what to accept. Profiles are DATA, so a new version can be added without touching the parser.
@@ -812,6 +829,7 @@ if (typeof module !== 'undefined') module.exports = { TOKENS, unscrambleSector, 
    - Time is "virtual": every statement and every byte sent to the terminal costs a few microseconds,
      and execution is slowed down accordingly (the game's pace depended only on the speed of the 2200). */
 const _DL = (typeof module !== 'undefined') ? require('./dialects.js') : { DEFAULT_DIALECT, getDialect };
+const _CP = (typeof module !== 'undefined') ? require('./compat.js') : { COMPAT: (typeof COMPAT !== 'undefined' ? COMPAT : {}) };
 class BasicError extends Error {}
 class AllFill { constructor(b){ this.b=b; } }
 /* control outcomes: not errors, they make run() finish with a status */
@@ -820,7 +838,7 @@ class ProgramStop { constructor(line){ this.line=line; } }
 class ProgramHalt { constructor(){} }
 
 const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','INPUT','LET','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
-  'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','LOAD','REM',
+  'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','END','LOAD','REM',
   '$GIO/005(A000)','$BREAK','$TRAN'];
 const NUMFN = ['INT','MOD','MIN','MAX','ABS','RND','SGN','LEN','SQR','EXP','LOG','SIN','COS','TAN','ATN'];
 
@@ -893,6 +911,7 @@ class Parser {
         for(;;){ this.ws(); if(/\d/.test(s[this.i]||'')) list.push(this.lineNo()); else list.push(null);
           if(!this.eat(',')) break; }
         return {t:'on', e, kind, list}; }
+      case 'END': return {t:'end'};
       case 'STOP': { this.ws(); if(s[this.i]==='"') this.i=s.indexOf('"',this.i+1)+1; return {t:'stop'}; }
       case 'LOAD': { this.ws(); if(s.startsWith('RUN',this.i)){ this.i+=3; return {t:'loadrun'}; }
         if(s[this.i]==='T') this.i++; this.ws(); if(s[this.i]!=='"') this.err('file name expected'); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1; return {t:'load', name}; }
@@ -1059,6 +1078,7 @@ class Interp {
     this.runId=0; this.stmtCost=100; this.byteCost=500; this.breakCost=20000; this.speed=1; this.slow=false;
     this.cache=new Map();
     this.dialect=_DL.getDialect('basic2');
+    this.patches=_CP.COMPAT;          // compatibility patches by program name (see compat.js)
     this.reportErrors=true;     // true: a runtime error is written at the bottom of the screen and rethrown ('game' use)
     this.returnErrors=false;    // true: run() returns {status:'error',...} ('shell' use)
     this.haltReq=false; this.dIdx=-1; this.dFresh=false; this.canContinue=false;
@@ -1166,7 +1186,7 @@ class Interp {
   }
   /* ---------- use as an environment: program in memory, RUN, direct statements ---------- */
   clearVars(){ this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear(); this.curFile=null; }
-  setProgram(entries){ this.prog=this.buildProgram('PROGRAM',entries); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
+  setProgram(entries, name){ this.prog=this.buildProgram(name||'PROGRAM',entries,(name&&this.patches?.[name])||{}); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
   async runFrom(startLine){
     this.clearVars(); this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false;
     if(startLine!=null) this.jump(startLine); else { this.li=0; this.si=0; }
@@ -1261,6 +1281,7 @@ class Interp {
       case 'tran': { const t=this.str(this.ev(st.tb)); let v=this.str(this.ev(st.lv)); let o='';
         for(const ch of v){ let r=ch; for(let k=0;k+1<t.length;k+=2) if(t[k+1]===ch){ r=t[k]; break; } o+=r; }
         this.setLv(st.lv,o); return; }
+      case 'end': throw new ProgramEnd(false);
       case 'stop': throw new ProgramStop(this.curLineNo());
       case 'data': case 'deffn': case 'nop': return;
     }
@@ -1462,6 +1483,7 @@ class Workstation {
     this.T=term; this.io=io; this.disk=disk;
     this.interp=new _B.Interp(term,io,disk); this.interp.reportErrors=false; this.interp.returnErrors=true;
     this.lines=new Map();            // line number -> source text (statements)
+    this.programName=null;           // name the program in memory was loaded from (selects compatibility patches)
     this.history=[]; this.running=false; this.dirty=true;
     this.title=opts.title||'WANG BASIC-2  (BASIC2-JS)';
     this.onChange=opts.onChange||(()=>{});     // notifies the UI (program / disks changed)
@@ -1520,8 +1542,8 @@ class Workstation {
       case 'LIST':    return this.cmdList(up);
       case 'RUN':     return this.cmdRun(up);
       case 'CONTINUE': case 'CONT': return this.cmdCont();
-      case 'NEW':     this.lines.clear(); this.interp.clearVars(); this.changed(); return;
-      case 'CLEAR':   if(/^CLEAR\s*P/.test(up)){ this.lines.clear(); this.changed(); } else this.interp.clearVars(); return;
+      case 'NEW':     this.lines.clear(); this.programName=null; this.interp.clearVars(); this.changed(); return;
+      case 'CLEAR':   if(/^CLEAR\s*P/.test(up)){ this.lines.clear(); this.programName=null; this.changed(); } else this.interp.clearVars(); return;
       case 'LOAD':    return this.cmdLoad(up);
       case 'SAVE':    return this.cmdSave(up);
       case 'SCRATCH': return this.cmdScratch(up);
@@ -1545,7 +1567,7 @@ class Workstation {
     if(!n) this.say('NO PROGRAM');
   }
   buildForRun(){
-    try{ this.interp.setProgram(this.entries()); this.dirty=false; return true; }
+    try{ this.interp.setProgram(this.entries(), this.programName); this.dirty=false; return true; }
     catch(e){ this.say('ERROR IN LINE '+(e.line??'?')+': '+(e.message||'').replace(/^.*line \d+: /,'')); return false; }
   }
   report(res){
@@ -1601,7 +1623,7 @@ class Workstation {
     const name=this.nameArg(up); if(!name){ this.err('FILE NAME REQUIRED'); return; }
     const src=this.disk.readProgram(name); if(!src){ this.err('FILE NOT FOUND: '+name); return; }
     this.lines.clear(); for(const e of _B.Interp.parseListing(src.text)) this.lines.set(e.no,e.src);
-    this.interp.clearVars(); this.changed(); this.say('LOADED '+name+' ('+this.lines.size+' LINES)');
+    this.programName=name; this.interp.clearVars(); this.changed(); this.say('LOADED '+name+' ('+this.lines.size+' LINES)');
     if(/^LOAD\s+RUN/.test(up)) return this.cmdRun('RUN');
   }
   cmdSave(up){
@@ -1859,7 +1881,7 @@ async function addFile(f){
     if(!addr){ alert('No writable drive to put the listing on.'); return; }
     selDrive=addr; p=disk.drives.get(addr);
   }
-  const name=f.name.replace(/[.][^.]*$/,'').toUpperCase();
+  const name=programNameFromFile(f.name);
   p.putProgram(name,text); disk.persist(); selFile=name; refreshDisks();
 }
 $('importFile').onchange=async e=>{ for(const f of e.target.files) await addFile(f); e.target.value=''; };

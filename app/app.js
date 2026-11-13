@@ -38,10 +38,6 @@ if(!haveGame()){                                // loader build: try the copy re
 }
 
 const interp=new Interp(T, io, disk);
-interp.patches={
-  'UNS-MAN':{74:'GOTO 70', 92:'F=0'},          // no disk check / Hall of Fame checksum
-  'UNS-GAME':{1570:'GOTO 1620'}                // ghost "dead end": it stays put instead of stopping the program
-};
 let SPEED={slow:1.5, normal:1, fast:0.65};   // virtual-time multiplier: about 6 / 9 / 14 steps per second
 const spd=document.getElementById('spd');
 spd.onchange=()=>{ interp.speed=SPEED[spd.value]; spd.blur(); };

@@ -5,7 +5,7 @@ src = root / 'src'
 parts = {
     '/*FONT*/':     (src / 'font.js').read_text(encoding='utf-8'),
     '/*TERMINAL*/': (src / 'wangcrt.js').read_text(encoding='utf-8') + '\n' + (src / 'crt-canvas.js').read_text(encoding='utf-8') + '\n' + (src / 'printer.js').read_text(encoding='utf-8'),
-    '/*INTERP*/':   (src / 'dialects.js').read_text(encoding='utf-8') + '\n' + (src / 'platter.js').read_text(encoding='utf-8') + '\n' + (src / 'image.js').read_text(encoding='utf-8') + '\n' + (src / 'basic2.js').read_text(encoding='utf-8'),
+    '/*INTERP*/':   (src / 'compat.js').read_text(encoding='utf-8') + '\n' + (src / 'dialects.js').read_text(encoding='utf-8') + '\n' + (src / 'platter.js').read_text(encoding='utf-8') + '\n' + (src / 'image.js').read_text(encoding='utf-8') + '\n' + (src / 'basic2.js').read_text(encoding='utf-8'),
     '/*SHELL*/':    (src / 'shell.js').read_text(encoding='utf-8'),
     '/*APP*/':      (root / 'app' / 'workstation-app.js').read_text(encoding='utf-8'),
 }

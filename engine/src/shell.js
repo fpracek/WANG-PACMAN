@@ -12,6 +12,7 @@ class Workstation {
     this.T=term; this.io=io; this.disk=disk;
     this.interp=new _B.Interp(term,io,disk); this.interp.reportErrors=false; this.interp.returnErrors=true;
     this.lines=new Map();            // line number -> source text (statements)
+    this.programName=null;           // name the program in memory was loaded from (selects compatibility patches)
     this.history=[]; this.running=false; this.dirty=true;
     this.title=opts.title||'WANG BASIC-2  (BASIC2-JS)';
     this.onChange=opts.onChange||(()=>{});     // notifies the UI (program / disks changed)
@@ -70,8 +71,8 @@ class Workstation {
       case 'LIST':    return this.cmdList(up);
       case 'RUN':     return this.cmdRun(up);
       case 'CONTINUE': case 'CONT': return this.cmdCont();
-      case 'NEW':     this.lines.clear(); this.interp.clearVars(); this.changed(); return;
-      case 'CLEAR':   if(/^CLEAR\s*P/.test(up)){ this.lines.clear(); this.changed(); } else this.interp.clearVars(); return;
+      case 'NEW':     this.lines.clear(); this.programName=null; this.interp.clearVars(); this.changed(); return;
+      case 'CLEAR':   if(/^CLEAR\s*P/.test(up)){ this.lines.clear(); this.programName=null; this.changed(); } else this.interp.clearVars(); return;
       case 'LOAD':    return this.cmdLoad(up);
       case 'SAVE':    return this.cmdSave(up);
       case 'SCRATCH': return this.cmdScratch(up);
@@ -95,7 +96,7 @@ class Workstation {
     if(!n) this.say('NO PROGRAM');
   }
   buildForRun(){
-    try{ this.interp.setProgram(this.entries()); this.dirty=false; return true; }
+    try{ this.interp.setProgram(this.entries(), this.programName); this.dirty=false; return true; }
     catch(e){ this.say('ERROR IN LINE '+(e.line??'?')+': '+(e.message||'').replace(/^.*line \d+: /,'')); return false; }
   }
   report(res){
@@ -151,7 +152,7 @@ class Workstation {
     const name=this.nameArg(up); if(!name){ this.err('FILE NAME REQUIRED'); return; }
     const src=this.disk.readProgram(name); if(!src){ this.err('FILE NOT FOUND: '+name); return; }
     this.lines.clear(); for(const e of _B.Interp.parseListing(src.text)) this.lines.set(e.no,e.src);
-    this.interp.clearVars(); this.changed(); this.say('LOADED '+name+' ('+this.lines.size+' LINES)');
+    this.programName=name; this.interp.clearVars(); this.changed(); this.say('LOADED '+name+' ('+this.lines.size+' LINES)');
     if(/^LOAD\s+RUN/.test(up)) return this.cmdRun('RUN');
   }
   cmdSave(up){

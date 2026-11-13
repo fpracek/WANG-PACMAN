@@ -151,6 +151,12 @@ emulated CRT with the BASIC-2 prompt and four panels/controls:
 - **Printers**: one card per printer (columns, paper, greenbar), text preview and **Download PDF**; add more printers.
 - **Editor**: edit the program as text, send it to the workstation, run it.
 
+A program imported from a file is stored under the file's base name (`UNS-MAN_listd.txt` and `UNS-MAN (1).txt` both become
+`UNS-MAN`). Programs known to need small adjustments are fixed on the fly by name (`src/compat.js`): a patch replaces one
+numbered line with a statement of ours, and applies both to `LOAD "name"` typed at the prompt and to a chained `LOAD T"name"`
+inside a running program. This is how the Pac-Man listings you supply yourself (`UNS-MAN`, `UNS-GAME`) run in the
+Workstation: import both files, then `SELECT DISK 320`, `LOAD "UNS-MAN"`, `RUN`.
+
 `Esc` or the HALT button interrupts a running program. Drive `310` holds a few sample programs (`HELLO`, `PRIMES`,
 `BOXES` for box and block graphics, `GUESS` for keyboard input); drive `320` is yours and is kept in the browser.
 
@@ -216,6 +222,7 @@ Semantics that matter (found on real listings):
 node test/shell.js          # the prompt: entering lines, LIST, RUN, STOP/CONTINUE/HALT, SAVE/LOAD/CATALOG, errors
 node test/guess.js          # LINPUT inside a running program (no keystroke is lost)
 node test/listd.js          # pretty-printed (listd) listings, INPUT, LOAD RUN, RESTORE LINE n,k, <>=, ";;", DEFFN with a space
+node test/compat.js         # compatibility patches by program name (prompt LOAD and chained LOAD), import names
 node test/dialects.js       # what each dialect accepts, REM $PC, the DIALECT command
 node test/image.js          # disk images built in memory: .bs2 and .wvd, catalog, tokenized programs, mounting
 node test/printing.js       # SELECT PRINT / SELECT LIST routing, form feed, PDF output

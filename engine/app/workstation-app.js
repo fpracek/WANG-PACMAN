@@ -204,7 +204,7 @@ async function addFile(f){
     if(!addr){ alert('No writable drive to put the listing on.'); return; }
     selDrive=addr; p=disk.drives.get(addr);
   }
-  const name=f.name.replace(/[.][^.]*$/,'').toUpperCase();
+  const name=programNameFromFile(f.name);
   p.putProgram(name,text); disk.persist(); selFile=name; refreshDisks();
 }
 $('importFile').onchange=async e=>{ for(const f of e.target.files) await addFile(f); e.target.value=''; };

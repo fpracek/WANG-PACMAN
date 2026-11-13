@@ -8,6 +8,7 @@
    - Time is "virtual": every statement and every byte sent to the terminal costs a few microseconds,
      and execution is slowed down accordingly (the game's pace depended only on the speed of the 2200). */
 const _DL = (typeof module !== 'undefined') ? require('./dialects.js') : { DEFAULT_DIALECT, getDialect };
+const _CP = (typeof module !== 'undefined') ? require('./compat.js') : { COMPAT: (typeof COMPAT !== 'undefined' ? COMPAT : {}) };
 class BasicError extends Error {}
 class AllFill { constructor(b){ this.b=b; } }
 /* control outcomes: not errors, they make run() finish with a status */
@@ -16,7 +17,7 @@ class ProgramStop { constructor(line){ this.line=line; } }
 class ProgramHalt { constructor(){} }
 
 const STMT_KW = ['PRINTUSING','PRINT','KEYIN','LINPUT','INPUT','LET','GOSUB','GOTO','RESTORE','RETURN','CONVERT','DBACKSPACE',
-  'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','LOAD','REM',
+  'LIMITS','SELECT','DEFFN','DIM','COM','MAT','READ','DATA','FOR','NEXT','IF','ON','STOP','END','LOAD','REM',
   '$GIO/005(A000)','$BREAK','$TRAN'];
 const NUMFN = ['INT','MOD','MIN','MAX','ABS','RND','SGN','LEN','SQR','EXP','LOG','SIN','COS','TAN','ATN'];
 
@@ -89,6 +90,7 @@ class Parser {
         for(;;){ this.ws(); if(/\d/.test(s[this.i]||'')) list.push(this.lineNo()); else list.push(null);
           if(!this.eat(',')) break; }
         return {t:'on', e, kind, list}; }
+      case 'END': return {t:'end'};
       case 'STOP': { this.ws(); if(s[this.i]==='"') this.i=s.indexOf('"',this.i+1)+1; return {t:'stop'}; }
       case 'LOAD': { this.ws(); if(s.startsWith('RUN',this.i)){ this.i+=3; return {t:'loadrun'}; }
         if(s[this.i]==='T') this.i++; this.ws(); if(s[this.i]!=='"') this.err('file name expected'); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1; return {t:'load', name}; }
@@ -255,6 +257,7 @@ class Interp {
     this.runId=0; this.stmtCost=100; this.byteCost=500; this.breakCost=20000; this.speed=1; this.slow=false;
     this.cache=new Map();
     this.dialect=_DL.getDialect('basic2');
+    this.patches=_CP.COMPAT;          // compatibility patches by program name (see compat.js)
     this.reportErrors=true;     // true: a runtime error is written at the bottom of the screen and rethrown ('game' use)
     this.returnErrors=false;    // true: run() returns {status:'error',...} ('shell' use)
     this.haltReq=false; this.dIdx=-1; this.dFresh=false; this.canContinue=false;
@@ -362,7 +365,7 @@ class Interp {
   }
   /* ---------- use as an environment: program in memory, RUN, direct statements ---------- */
   clearVars(){ this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear(); this.curFile=null; }
-  setProgram(entries){ this.prog=this.buildProgram('PROGRAM',entries); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
+  setProgram(entries, name){ this.prog=this.buildProgram(name||'PROGRAM',entries,(name&&this.patches?.[name])||{}); this.li=0; this.si=0; this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false; }
   async runFrom(startLine){
     this.clearVars(); this.gstack=[]; this.fstack=[]; this.dpos=0; this.canContinue=false;
     if(startLine!=null) this.jump(startLine); else { this.li=0; this.si=0; }
@@ -457,6 +460,7 @@ class Interp {
       case 'tran': { const t=this.str(this.ev(st.tb)); let v=this.str(this.ev(st.lv)); let o='';
         for(const ch of v){ let r=ch; for(let k=0;k+1<t.length;k+=2) if(t[k+1]===ch){ r=t[k]; break; } o+=r; }
         this.setLv(st.lv,o); return; }
+      case 'end': throw new ProgramEnd(false);
       case 'stop': throw new ProgramStop(this.curLineNo());
       case 'data': case 'deffn': case 'nop': return;
     }
