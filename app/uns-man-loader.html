@@ -1279,8 +1279,9 @@ function collectPrograms(files, wanted){
         if (!found) notes.push(f.name + ': no ' + wanted.join(' / ') + ' program found on this disk');
       } catch (e) { notes.push(f.name + ': ' + e.message); }
     } else {
+      // the file name starts with the program name; anything after it is allowed (UNS-MAN_listd.txt, UNS-MAN (1).txt, ...)
       const base = f.name.replace(/[.][^.]*$/, '').toUpperCase();
-      const i = wantedUpper.indexOf(base);
+      const i = wantedUpper.findIndex(w => base === w || (base.startsWith(w) && !/[A-Z0-9]/.test(base[w.length])));
       if (i >= 0) programs[wanted[i]] = latin1(f.bytes);
       else notes.push('ignored ' + f.name + ' (expected ' + wanted.map(w => w + '.txt').join(' and ') + ' or a disk image)');
     }

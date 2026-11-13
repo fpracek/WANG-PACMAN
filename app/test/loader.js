@@ -28,6 +28,11 @@ expect('two listings are collected', r.missing.length === 0 && r.programs['UNS-M
 r = collectPrograms([{ name: 'uns-man.TXT', bytes: bytes('x') }, { name: 'Uns-Game.txt', bytes: bytes('y') }], WANTED);
 expect('file names are matched ignoring case', r.missing.length === 0);
 
+r = collectPrograms([{ name: 'UNS-MAN_listd.txt', bytes: bytes('m') }, { name: 'UNS-GAME (1).txt', bytes: bytes('g') }], WANTED);
+expect('a suffix after the program name is allowed (_listd, (1), ...)', r.missing.length === 0 && r.programs['UNS-MAN'] === 'm' && r.programs['UNS-GAME'] === 'g');
+r = collectPrograms([{ name: 'UNS-MANAGER.txt', bytes: bytes('x') }], WANTED);
+expect('but a different name that merely starts with it is not matched', r.missing.length === 2);
+
 r = collectPrograms([{ name: 'DISK.BS2', bytes: makeImage(['OTHER', 'UNS-MAN', 'UNS-GAME']) }], WANTED);
 expect('a .bs2 image provides both programs', r.missing.length === 0 && /^10REM UNS-MAN$/m.test(r.programs['UNS-MAN']) && /^10REM UNS-GAME$/m.test(r.programs['UNS-GAME']));
 
