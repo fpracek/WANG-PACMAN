@@ -678,7 +678,7 @@ const bcHex = s => Array.from(s).map(c => ('0' + c.charCodeAt(0).toString(16)).s
 const bcIsHex = x => String(x).startsWith('HEX(');
 
 class BcDec {
-  constructor(body) { this.b = body; this.p = 0; this.st = []; this.precs = new Map(); this.curline = 0; this.elseEnd = 0; this.base = 0; this.starts = null; }
+  constructor(body) { this.b = body; this.p = 0; this.st = []; this.precs = new Map(); this.curline = 0; this.elseEnd = 0; this.base = 0; this.starts = null; this.tokens = null; }
   u8() { if (this.p >= this.b.length) throw new BcUnknown(undefined, this.p, 'end of data'); return this.b[this.p++]; }
   u16() { const v = this.u8(); return v | (this.u8() << 8); }
   u16s() { const v = this.u16(); return v > 32767 ? v - 65536 : v; }
@@ -699,6 +699,7 @@ class BcDec {
         let e = this.u16(); if (e > 32767) e -= 65536;
         let m = 0; for (let i = 5; i >= 0; i--) m = m * 256 + this.b[this.p + i]; this.p += 6;
         if (m >= Math.pow(2, 47)) m -= Math.pow(2, 48);
+        if (e > 0 && m !== 0) { st.push(m + 'E' + e); return true; }
         const v = e >= 0 ? m * Math.pow(10, e) : m / Math.pow(10, -e);
         let s = Number(v.toPrecision(10)).toString(); if (v > 0 && v < 1) s = s.replace(/^0+/, ''); else if (v < 0 && v > -1) s = '-' + s.slice(1).replace(/^0+/, '');
         st.push(s);
@@ -980,6 +981,7 @@ class BcDec {
       if (bcIsHex(o1) || o1.startsWith('"')) {
         const v = bcIsHex(o1) ? o1.slice(4, -1) : bcHex(bcStrip(o1));
         if (arrayish) return c >= 0x10 ? tgt + '=' + nm + ' ALL(' + v + ')' : tgt + '=' + nm + ' HEX(' + v + ')';
+        if (v.length > 2) return tgt + '=' + nm + ' HEX(' + v + ')';
         return nm + '(' + tgt + ',' + v + ')';
       }
       if (ops[1] instanceof BcSub) return tgt + '=' + nm + ' ' + o1;
@@ -1010,6 +1012,7 @@ class BcDec {
     if (t === 0xb6 && ops.length === 1) {                      // RESTORE LINE n[,k]
       const kind = this.u8(); let ln;
       if (kind === 1) ln = this.relLine(this.u16s()); else { const lo = this.u8(), hi = this.u8(); ln = bcBcdLine(lo, hi); }
+      if (ln === 0) return 'RESTORE';
       return 'RESTORE LINE ' + ln + (String(ops[0]) === '1' ? '' : ',' + ops[0]);
     }
     if ((t === 0xae || t === 0xb0) && ops.length === 1) {      // READ
@@ -1027,7 +1030,7 @@ class BcDec {
     if (t === 0x5f && ops.length === 2) return 'HEXPACK ' + ops[0] + ' FROM ' + ops[1];
     if (t === 0x60 && ops.length === 2) return 'HEXUNPACK ' + ops[0] + ' TO ' + ops[1];
     if (t === 0x84 && ops.length === 4) {                      // MAT SEARCH
-      const kind = this.u8(), rel = { 2: '=', 4: '>', 3: '<', 5: '<>' }[kind] || '=', step = String(ops[3]);
+      const kind = this.u8(), rel = BC_RELS[kind] || '=', step = String(ops[3]);
       return 'MAT SEARCH ' + BcDec.matop(ops[0]) + ',' + rel + ops[1] + ' TO ' + BcDec.matop(ops[2]) + (step === '1' ? '' : ' STEP ' + step);
     }
     if (t === 0x81 && ops.length >= 2) {
@@ -1311,11 +1314,11 @@ class BcDec {
   }
 
   printStmt() {
-    const items = []; let nl = false;
+    const items = []; let nl = false, saw9e = false;
     while (this.more()) {
       const t = this.u8();
       if (t === 0xb4) break;
-      if (t === 0x9e || t === 0x9f) { nl = true; continue; }
+      if (t === 0x9e || t === 0x9f) { nl = true; if (t === 0x9e) saw9e = true; continue; }
       if (t === 0xa7) { items.push(','); continue; }
       if (t === 0xa4) { items.push(''); continue; }
       if (t === 0xa0 || t === 0xa2 || t === 0xa5 || t === 0xa1 || t === 0xc5) {
@@ -1328,6 +1331,7 @@ class BcDec {
       if (this.exprToken(t)) continue;
       throw new BcUnknown(t, this.p - 1, 'print');
     }
+    if (saw9e && items.length === 1 && String(items[0]).startsWith('HEXOF(')) return 'HEXPRINT ' + String(items[0]).slice(6, -1);
     let out = '';
     for (const it0 of items) {
       const it = String(it0);
@@ -1339,17 +1343,35 @@ class BcDec {
   }
 }
 
+/* a statement kept in Wang tokenized form: tokens = the TOKENS table of image.js */
+function bcTokensText(b, tokens) {
+  let out = '';
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i];
+    if (c === 0xff && i + 2 < b.length) { out += String(1000 * (b[i + 1] >> 4) + 100 * (b[i + 1] & 15) + 10 * (b[i + 2] >> 4) + (b[i + 2] & 15)); i += 2; continue; }
+    if (c < 128) out += String.fromCharCode(c);
+    else if (tokens[c]) out += tokens[c];
+    else out += '\\x' + ('0' + c.toString(16)).slice(-2);
+  }
+  return out;
+}
+
 /* one line body -> statement text (throws BcUnknown when it meets something it does not understand).
    base / starts: absolute offset of the body in the program and a Map(offset -> line number) of all bodies, used to
    resolve relative jumps (GOTO / KEYIN / IF ... THEN <earlier line>); optional. */
-function decompileBody(body, lineno, base, starts) {
-  const d = new BcDec(body); d.curline = lineno || 0; d.base = base || 0; d.starts = starts || null; const out = []; let lastIdx = -1, prevIf = false;
+function decompileBody(body, lineno, base, starts, tokens) {
+  const d = new BcDec(body); d.curline = lineno || 0; d.base = base || 0; d.starts = starts || null; d.tokens = tokens || null; const out = []; let lastIdx = -1, prevIf = false;
   if (body[0] === 0xd3) d.p = 2;
   if (body[d.p] === 0xcb) { d.p++; const n = d.u16(), st0 = d.p; return '%' + d.imageText(st0, n); }
   while (d.more()) {
     const t = d.u8();
     if (t === 0x77) break;
     if (t === 0xd3) { d.u8(); continue; }
+    if (t === 0x20 && d.tokens) {                              // a statement kept in Wang tokenized form
+      const q = d.p; d.u16();
+      const e = (body.length >= 3 && body[body.length - 3] === 0x77 && body[body.length - 2] === 0 && body[body.length - 1] === 0) ? body.length - 3 : body.length;
+      out.push(bcTokensText(body.subarray(q + 6, e), d.tokens)); d.p = e; prevIf = false; continue;
+    }
     if (t === 0xcb) { const q = d.p, n = d.u16(); const txt = d.imageText(d.p, n); d.p = q + 2 + n; out.push('%' + txt); continue; }
     let idx;
     if (t !== 0x61) {
@@ -1368,7 +1390,7 @@ function decompileBody(body, lineno, base, starts) {
 function bcEscape(s) { return s.replace(/[^\x20-\x7e]/g, c => '\\x' + ('0' + c.charCodeAt(0).toString(16)).slice(-2)).replace(/\\(?!x[0-9a-f]{2})/g, '\\x5c'); }
 
 /* the bytes of a compiled program (starting at "0E 00 BC Rev ...") -> listing */
-function decompileProgram(bytes) {
+function decompileProgram(bytes, tokens) {
   let sig = ''; for (let i = 2; i < 16; i++) sig += String.fromCharCode(bytes[i]);
   const recs = []; let p = 16;
   while (p + 4 <= bytes.length) {
@@ -1382,7 +1404,7 @@ function decompileProgram(bytes) {
   const lines = []; let failed = 0;
   for (const r of recs) {
     let text;
-    try { text = bcEscape(decompileBody(r.body, r.no, r.base, starts)); }
+    try { text = bcEscape(decompileBody(r.body, r.no, r.base, starts, tokens)); }
     catch (e) { failed++; text = 'REM *** NOT DECODED (' + (e.why || e.message) + ') ***'; }
     lines.push(r.no + text);
   }
@@ -1572,7 +1594,7 @@ function platterFromSectors(label, sectors){
       if (sig) {          // object code: decompile what we can (see bcdecomp.js); the rest becomes REM lines
         const raw = new Uint8Array((f.end - f.start + 1) * 256);
         for (let n = f.start; n <= f.end; n++) raw.set(sectors[n], (n - f.start) * 256);
-        let r = null; try { r = _BD.decompileProgram(raw); } catch (e) { r = null; }
+        let r = null; try { r = _BD.decompileProgram(raw, TOKENS); } catch (e) { r = null; }
         const head = '# Niakwa BASIC-2C object code (' + sig[1] + ')';
         if (r && r.total > 0) p.files.set(f.name, { name: f.name, kind: 'program', compiled: sig[1], decompiled: { total: r.total, failed: r.failed },
           text: head + ': decompiled, ' + r.failed + ' of ' + r.total + ' lines not decoded' + String.fromCharCode(10) + r.text, image: true });

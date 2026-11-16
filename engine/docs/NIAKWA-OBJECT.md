@@ -41,11 +41,15 @@ Statements in a line: `61 <index 0,1,2..>` + payload. 166 of 171 programs (all w
 - GOSUB 'n: `5E n argc 00 00 {arg 72}`; DEFFN 'n: `41 <len16> <n16> argc <u16> {var 94} 4F`.
 
 ## Coverage
-Measured on the 166 programs with a source (seventh pass, loose comparison: blanks, `THEN GOTO`, zero padding, `STR(x,1,n)` =
-`STR(x,,n)`, `HEX(20)` = `" "`, which the compiler cannot distinguish): of 9,908 lines, 9,164 (92.5%) come back with the same text
-as the source, about 620 decode with differences (redundant parentheses in the original, `ELSE` after `ON..GOTO`, `ALL("0")`
-versus `ALL(0)`, `LOAD RUN` without a name, and similar details), and 122 stop at a token not yet understood. On the whole
+Measured on the 166 programs with a source (eighth pass, loose comparison: blanks, `THEN GOTO`, zero padding, `STR(x,1,n)` =
+`STR(x,,n)`, `HEX(20)` = `" "`, which the compiler cannot distinguish): of 9,908 lines, 9,190 (92.8%) come back with the same text
+as the source, about 610 decode with differences (redundant parentheses in the original, `ELSE` after `ON..GOTO`, `ALL("0")`
+versus `ALL(0)`, `LOAD RUN` without a name, and similar details), and 108 stop at a token not yet understood. On the whole
 test disk (including programs with no source) 98% of the lines decode.
+
+Added in the eighth pass: statements kept in Wang tokenized form (record `20 n a b <Wang tokens>`: the engine's Wang token table decodes them),
+HEXPRINT (`A1 9E`), RESTORE without a line, real constants written with an exponent (`1E6`), the two-byte AND/OR/XOR assignment form,
+and MAT SEARCH relations.
 
 Added in the seventh pass: user functions (`DEFFN T(X)=expr` = `40 n id param expr 4E`, call = `arg 28 id 00 00`, id = letter - 0x37), key macros
 (`DEFFN'n"text"`: `41 n fn len text`, told apart from a normal DEFFN by a non-zero second byte), image lines with fields (`CB n tl text`

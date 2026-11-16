@@ -179,7 +179,7 @@ function platterFromSectors(label, sectors){
       if (sig) {          // object code: decompile what we can (see bcdecomp.js); the rest becomes REM lines
         const raw = new Uint8Array((f.end - f.start + 1) * 256);
         for (let n = f.start; n <= f.end; n++) raw.set(sectors[n], (n - f.start) * 256);
-        let r = null; try { r = _BD.decompileProgram(raw); } catch (e) { r = null; }
+        let r = null; try { r = _BD.decompileProgram(raw, TOKENS); } catch (e) { r = null; }
         const head = '# Niakwa BASIC-2C object code (' + sig[1] + ')';
         if (r && r.total > 0) p.files.set(f.name, { name: f.name, kind: 'program', compiled: sig[1], decompiled: { total: r.total, failed: r.failed },
           text: head + ': decompiled, ' + r.failed + ' of ' + r.total + ' lines not decoded' + String.fromCharCode(10) + r.text, image: true });
