@@ -41,20 +41,41 @@ Statements in a line: `61 <index 0,1,2..>` + payload. 166 of 171 programs (all w
 - GOSUB 'n: `5E n argc 00 00 {arg 72}`; DEFFN 'n: `41 <len16> <n16> argc <u16> {var 94} 4F`.
 
 ## Coverage
-Measured on the 166 programs with a source (third pass, loose comparison in `metric.py`: blanks, `THEN GOTO`, zero padding,
-`STR(x,1,n)`=`STR(x,,n)`, `HEX(20)`=`" "`, which the compiler cannot distinguish): of 9,908 lines, 7,483 (75.5%) decode to the same
-text as the source, 508 decode with differences (mostly redundant parentheses and AND/OR corner cases), 1,917 stop at a token not
-yet understood (`run1.py` lists them by frequency).
+Measured on the 166 programs with a source (seventh pass, loose comparison: blanks, `THEN GOTO`, zero padding, `STR(x,1,n)` =
+`STR(x,,n)`, `HEX(20)` = `" "`, which the compiler cannot distinguish): of 9,908 lines, 9,164 (92.5%) come back with the same text
+as the source, about 620 decode with differences (redundant parentheses in the original, `ELSE` after `ON..GOTO`, `ALL("0")`
+versus `ALL(0)`, `LOAD RUN` without a name, and similar details), and 122 stop at a token not yet understood. On the whole
+test disk (including programs with no source) 98% of the lines decode.
 
-Added in the third pass: ELSE (a forward `26 rel` ends the THEN part, the else statements follow as ordinary `61 n` records),
-AND/OR chains (skip-form IF whose skip lands inside the next condition = OR; nested IF filling the whole skip = AND), string
-concatenation (`2E` = "append next operand"), `BIN` (`24`), `TIME`/`DATE` (`8F 05`/`8F 03` + `5A`), VAL (`C6` / `C7`=VAL(x,2)),
-CONVERT (`62 n 08 30 09`, string to number `30 08`), `ALL` (`6F`), INIT (`66`), LINPUT without prompt (`4D 03`), multiple assignment
-(`71`), ERROR (`51 09 00 rel32` + GOTO/GOSUB/STOP), STOP with text (the message string is `CR "STOP " text [line no] CR`; the line
-number means `#`), REM (control bytes 1..31 inside the text = that many blanks), and the disk family `BE`: file number, operands,
-then a sub-code: `78` LOAD, `46 n arr 31|36` DATA LOAD/SAVE BA, `35 00` DC OPEN, `3D` SAVE DC OPEN, `3C` DC END,
-`34 len ..items.. 33` DATA LOAD DC, `3A ..items.. 39` DATA SAVE DC (each item: array/var ref then `30 kind`), `7B` LIMITS.
+Added in the seventh pass: user functions (`DEFFN T(X)=expr` = `40 n id param expr 4E`, call = `arg 28 id 00 00`, id = letter - 0x37), key macros
+(`DEFFN'n"text"`: `41 n fn len text`, told apart from a normal DEFFN by a non-zero second byte), image lines with fields (`CB n tl text`
+then `(count,08)` = count `#` characters and `(count,text)` literals, ended by 00), DATA tables with several type masks (one u16 mask per
+group of 16 items), MOVE (`BE 8F 08 .. 91 00`), MAT MOVE (`81`), SELECT lists mixing `#n<dev>` and `PRINT <dev>(w)`, $GIO with flag 06, and signed real
+constants.
 
-Still open: `$GIO` (`5A 00 BD`, `D2` text + `04`), the other `BE` sub-codes (`8F xx` COPY/SCRATCH/FORMAT/MOVE, DSKIP `3F`, VERIFY `CA`,
-`$OPEN`), MAT, PRINTUSING, READ/RESTORE, HEXPACK (`C5 5F`), `IF END` / `IF #ID` (`55 nn 00`), `BIN(STR())=` stores (`7A`), image lines
-with `#` fields, and statements that leave operands on the stack.
+Added in the sixth pass: mixed AND/OR conditions (the chain is flattened: a condition whose skip lands on the start of the THEN body is an
+"if true go to THEN" jump with the relation as written and ends an AND group, the others are "if false skip" tests with the inverted
+relation; groups are joined by OR), DATA tables longer than 16 items (periodic type mask), COPY (`BE 8F 08 .. BE 8F 08 .. 2F 00`), $OPEN,
+$FORMATDISK, SCRATCH DISK (`8F 16/17`), LIST SDC (`8F 24`), DATA SAVE DA (`46 n 37`), DATA SAVE DC CLOSE (`3B`), MAT REDIM (`B3`),
+COM CLEAR (`2D`), ROTATE / ROTATEC, SGN (`BF`), `^` (`9B`), multiple assignment of ALL, statements that follow a line-form IF without
+their own `61 n` header, and DEFFN parameters that are substrings.
+
+Added in the fifth pass: ABS, VER, unary minus (`93`), `$PSTAT(n)` / `$MSG` (`5A 0D` / `5A 08`), `$RELEASETERMINAL [TO n]` (`4A`),
+PACK / UNPACK (`62 n 08|00 n k .. 97 .. 30 0B|0C`), MAT SORT (`86`), MAT ZER (`8F 10`), `$BREAK n` (`8F 13`), RETURN CLEAR ALL
+(`8F 01`), ROTATEC (`B8 01`), SELECT P (`5B 02`), ON..GOSUB (entries `6A line` + `26` fillers), VERIFY (`CA`), DBACKSPACE (`3F 01`),
+LOAD with a variable name, SAVE with a range (`BA f s e`), AND/OR/XOR function forms (`7A 18`, `7A 06`), SPACEK.
+
+Added in the fourth pass: relative jumps (`26 rel16` = target body start, resolved through the program's line table: GOTO,
+KEYIN, IF ... THEN <earlier line>, RESTORE LINE `B6 01 rel`), END / RETURN CLEAR / CLEAR / $CLOSE / $RELEASEPART (`8F nn` as a
+statement), NEXT lists, image lines inside a line (`CB`), PRINTUSING (`AB m x y line16`, items closed by `AA`/`AC`, end `A9`),
+RESTORE LINE, READ (`AE 70` / `B0 73`), HEXPACK / HEXUNPACK (`5F` / `60`), MAT SEARCH (`84 kind`) and MAT COPY (`7D 00`), INIT with
+several targets (`65`.. `66`), SELECT lists and `SELECT #n<dev>` chains, multiple assignment (`74 n 00 .. 73 75`), Boolean and
+arithmetic string statements (`4C 73` copy then `7A code` XOR/AND/OR, `79 code` ADD/SUB), MIN / MAX / NUM, POS with its relation,
+DIM/COM of numeric arrays (`42`), AND/OR chains (a nested IF whose body ends beyond the first skip = OR), $GIO (`D2` text with
+first byte 04, then file, hex words, arrays, `48`), DATA LOAD DA (`46 n 32 ..`), SCRATCH (`8F 15`), SAVE (`BA`), DSKIP (`3F`),
+LINPUT variants (`4D 01|03|05|07`: bit 2 = `?`, bit 1 = `-`), ERROR followed by a statement with the same index, and several
+small tokens (`#ID`, `#PART`, `#TERM`, `#GOLDKEY`, `ERR`, `TIME`, `DATE`).
+
+Still open: other `BE` sub-codes (`8F 08` COPY, `8F 24` LIST, FORMAT, MOVE, VERIFY), `$IF`, `$TRAN` with its `R` flag, `LOAD RUN`
+without a name, image lines with `#` fields, ON ... GOTO tables with unusual layouts, DEFFN with unusual headers, ADD/SUB corner
+cases, and a few dozen rare tokens.
