@@ -30,6 +30,7 @@ const TOKENS = (function(){
 })();
 
 const _P = (typeof module !== 'undefined') ? require('./platter.js') : { Platter };
+const _BD = (typeof module !== 'undefined') ? require('./bcdecomp.js') : { decompileProgram };
 const hex2 = n => n.toString(16).padStart(2, '0');
 
 /* 8-character names: trailing spaces / 0xFF removed, odd bytes shown as \xHH */
@@ -173,6 +174,18 @@ function platterFromSectors(label, sectors){
     if (f.state !== 0x10 || f.start > f.end || f.end >= sectors.length) continue;      // skip scratched / damaged entries
     if (p.files.has(f.name)) continue;
     if (f.type === 0x80) {
+      // Niakwa BASIC-2C compiled object code starts with 0E 00 "BC Rev x.yy.zz": there is no source listing in the image
+      const sig = /^\x0e\x00(BC Rev [0-9.]+)/.exec(String.fromCharCode.apply(null, sectors[f.start].subarray(0, 20)));
+      if (sig) {          // object code: decompile what we can (see bcdecomp.js); the rest becomes REM lines
+        const raw = new Uint8Array((f.end - f.start + 1) * 256);
+        for (let n = f.start; n <= f.end; n++) raw.set(sectors[n], (n - f.start) * 256);
+        let r = null; try { r = _BD.decompileProgram(raw); } catch (e) { r = null; }
+        const head = '# Niakwa BASIC-2C object code (' + sig[1] + ')';
+        if (r && r.total > 0) p.files.set(f.name, { name: f.name, kind: 'program', compiled: sig[1], decompiled: { total: r.total, failed: r.failed },
+          text: head + ': decompiled, ' + r.failed + ' of ' + r.total + ' lines not decoded' + String.fromCharCode(10) + r.text, image: true });
+        else p.files.set(f.name, { name: f.name, kind: 'program', compiled: sig[1], text: head + ': not listable' + String.fromCharCode(10), image: true });
+        continue;
+      }
       p.files.set(f.name, { name: f.name, kind: 'program', text: programText(sectors, f), image: true });
     } else {
       const raw = new Uint8Array((f.end - f.start + 1) * 256);

@@ -151,8 +151,10 @@ class Workstation {
   cmdLoad(up){
     const name=this.nameArg(up); if(!name){ this.err('FILE NAME REQUIRED'); return; }
     const src=this.disk.readProgram(name); if(!src){ this.err('FILE NOT FOUND: '+name); return; }
+    if(src.compiled && !src.decompiled){ this.err(name+' IS A NIAKWA COMPILED PROGRAM ('+src.compiled+'): OBJECT CODE, CANNOT LOAD OR LIST'); return; }
     this.lines.clear(); for(const e of _B.Interp.parseListing(src.text)) this.lines.set(e.no,e.src);
     this.programName=name; this.interp.clearVars(); this.changed(); this.say('LOADED '+name+' ('+this.lines.size+' LINES)');
+    if(src.decompiled) this.say('DECOMPILED FROM NIAKWA OBJECT CODE: '+src.decompiled.failed+' OF '+src.decompiled.total+' LINES NOT DECODED (SHOWN AS REM)');
     if(/^LOAD\s+RUN/.test(up)) return this.cmdRun('RUN');
   }
   cmdSave(up){

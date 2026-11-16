@@ -95,6 +95,8 @@ p.addProgram('UNS-MAN', listingText);
 `320`; a `.wvd` with several platters mounts one drive each). Two formats are recognised:
 
 - `.bs2`: raw 256-byte sectors (the format Niakwa BASIC-2C uses for its "disk image files with a 2200 directory structure").
+- Raw sector dumps may carry other extensions (for example `.220`, as saved by some 2200 tools): images are recognised by content, not by name.
+- Disks written by Niakwa BASIC-2C may hold *compiled* programs (object code starting with `BC Rev x.yy.zz`). A partial decompiler (`src/bcdecomp.js`, format notes in `docs/NIAKWA-OBJECT.md`) turns them back into listings: on a test set of about 10,000 lines roughly three quarters come back identical to the original source; lines it does not understand are kept as `REM *** NOT DECODED ***`. `LOAD` says how many. The result is for reading, not a guarantee that the program runs.
 - `.wvd`: WangEmu virtual disks (256-byte `WANG` header, label, platters).
 
 Sector 0 describes the disk; the first sectors are the catalog (16-byte entries: state, program/data, first and last
@@ -222,6 +224,7 @@ Semantics that matter (found on real listings):
 node test/shell.js          # the prompt: entering lines, LIST, RUN, STOP/CONTINUE/HALT, SAVE/LOAD/CATALOG, errors
 node test/guess.js          # LINPUT inside a running program (no keystroke is lost)
 node test/listd.js          # pretty-printed (listd) listings, INPUT, LOAD RUN, RESTORE LINE n,k, <>=, ";;", DEFFN with a space
+node test/niakwa-compiled.js # Niakwa object code: recognition and decompiler (synthetic)
 node test/compat.js         # compatibility patches by program name (prompt LOAD and chained LOAD), import names
 node test/dialects.js       # what each dialect accepts, REM $PC, the DIALECT command
 node test/image.js          # disk images built in memory: .bs2 and .wvd, catalog, tokenized programs, mounting

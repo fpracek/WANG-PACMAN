@@ -188,14 +188,14 @@ async function addFile(f){
   if(isDiskImage(bytes)){
     try{
       const used=disk.mountImage(bytes, f.name); selDrive=used[0]; selFile=null; refreshDisks();
-      if(!/[.](bs2|wvd|img)$/i.test(f.name)) alert(f.name+' is a disk image, so it was mounted (read-only) as drive '+used.join(', ')+'. Type CATALOG '+used[0]+' to see its files.');
+      if(!/[.](bs2|wvd|img|220|dsk)$/i.test(f.name)) alert(f.name+' is a disk image, so it was mounted (read-only) as drive '+used.join(', ')+'. Type CATALOG '+used[0]+' to see its files.');
     }catch(err){ alert('Cannot read '+f.name+': '+err.message); }
     return;
   }
   const text=latin1Text(bytes);
   if(Interp.parseListing(text).length===0){
     alert('No BASIC lines found in '+f.name+'.\n\nA listing has one BASIC line per text line, starting with the line number (for example: 10 PRINT "HI"). '
-      +'Wang disk images (.bs2 / .wvd) are recognised automatically.');
+      +'Wang disk images (.bs2 / .wvd / .220 ...) are recognised automatically.');
     return;
   }
   let p=disk.drives.get(selDrive);

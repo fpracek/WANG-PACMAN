@@ -61,7 +61,7 @@ class DiskSystem {
     return null;
   }
   status(name){ const f=this.find(name); return !f ? 0 : (f.file.kind==='program' ? 1 : 2); }
-  readProgram(name){ const f=this.find(name); if(!f||f.file.kind!=='program') return null; return {text:f.file.text, version:f.platter.version, key:f.addr+':'+name}; }
+  readProgram(name){ const f=this.find(name); if(!f||f.file.kind!=='program') return null; return {text:f.file.text, compiled:f.file.compiled, decompiled:f.file.decompiled, version:f.platter.version, key:f.addr+':'+name}; }
   readData(name){ const f=this.find(name); return (f&&f.file.kind==='data') ? f.file.records.slice() : null; }
   writeData(name,records,addr){
     const f=this.find(name); const p= f ? f.platter : this.drives.get(addr||this.current);
