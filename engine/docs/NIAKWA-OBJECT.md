@@ -40,6 +40,17 @@ Statements in a line: `61 <index 0,1,2..>` + payload. 166 of 171 programs (all w
   `A1` HEXOF, `A7` comma, `9C 00` AT(r,c), `9D` BOX(r,c); `9F` = newline at the end (no `9F`: trailing `;`); `9E` bare PRINT.
 - GOSUB 'n: `5E n argc 00 00 {arg 72}`; DEFFN 'n: `41 <len16> <n16> argc <u16> {var 94} 4F`.
 
+## Verification with the compiler (round trip)
+
+The decompiled source of each program is fed back to `B2C.EXE` (run under DOSBox) and the object code it produces is compared with the object code on the disk,
+ignoring the `D4 nn` markers that only B2C 2.00.04 writes and the skip / jump counts that depend on them. A line that compiles to the same bytes was decoded exactly,
+whatever the cosmetic differences from the original text. Result on 166 programs: of 9,908 lines, 9,800 decode, **9,670 (98.7%) recompile identically**, 130 differ
+and 108 are not decoded. About 33 of the differences are forms that B2C 2.00.04 refuses and keeps tokenized (not verifiable with that compiler); the rest are
+compiler choices that cannot be reproduced from text (a TAB in a string literal becomes two blanks, the flag of `MAT COPY`, a `C5` before `A5` in some prints).
+
+Rules found with the round trip: `D3 nn` = column of the statement (blanks = nn + 2 - current column); `$TRAN` flag 0 = `R`; `ALL(hex)` vs `ALL("c")` by the `DA` flag;
+`DSKIP` / `DBACKSPACE` sub-codes 00..05; `SAVE` flag 0 = `SAVE T`, 8 = `SAVE T()`, a non-zero file constant = `SAVE T#n,`; PRINTUSING flag bit 0 = `;` after the format, bit 1 = trailing `;`.
+
 ## Coverage
 Measured on the 166 programs with a source (eighth pass, loose comparison: blanks, `THEN GOTO`, zero padding, `STR(x,1,n)` =
 `STR(x,,n)`, `HEX(20)` = `" "`, which the compiler cannot distinguish): of 9,908 lines, 9,190 (92.8%) come back with the same text
