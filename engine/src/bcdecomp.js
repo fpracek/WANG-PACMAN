@@ -13,6 +13,7 @@ class BcUnknown extends Error {
 
 const BC_BIN = { 0x23: '+', 0xc4: '-', 0x92: '*', 0x47: '/', 0x90: 'MOD', 0x91: '^', 0x9b: '^' };
 const BC_FUNC = { 0x68: ['INT', 1, 1], 0x6c: ['LEN', 1, 1], 0x89: ['RND', 2, 1], 0x8c: ['MAX', 1, 2], 0x8e: ['MIN', 1, 2], 0x95: ['NUM', 1, 1], 0x21: ['ABS', 1, 1], 0xc9: ['VER', 1, 2], 0xbf: ['SGN', 1, 1] };
+const BC_DEVN = { 0: 'TAPE', 1: 'PRINT', 2: 'LIST', 3: 'CO', 4: 'CI', 5: 'INPUT', 20: 'TC' };
 const BC_RELS = { 1: '<', 2: '=', 3: '<=', 4: '>', 5: '<>', 6: '>=', 7: '<>' };
 const BC_INV = { '<': '>=', '=': '<>', '<=': '>', '>': '<=', '<>': '=', '>=': '<' };
 const BC_PREC = { '+': 1, '-': 1, '*': 2, '/': 2, '^': 3 };
@@ -174,6 +175,7 @@ class BcDec {
   }
 
   statement() {
+    while (this.more() && (this.peek() === 0x61 || this.peek() === 0xd4) && this.p + 2 < this.b.length && this.b[this.p + 2] !== undefined && (this.nohdr || this.peek() === 0x61)) this.p += 2;
     let t = this.u8();
     if (t === 0xd2) {                                          // REM (or the text of a $GIO)
       const n = this.u16(); const raw = []; for (let i = 0; i < n; i++) raw.push(this.u8());
@@ -241,13 +243,13 @@ class BcDec {
         if (a === 7 || a === 8) w = '(' + x[0] + ')';
       }
       const devName = d => { d = String(d); return d.startsWith('"') ? bcStrip(d) : '<' + d + '>'; };
-      let out = 'SELECT ' + ({ 0: 'TAPE', 1: 'PRINT', 2: 'LIST' }[i] || 'DEV' + i) + ' ' + devName(v[0]) + w;
+      let out = 'SELECT ' + (BC_DEVN[i] || 'DEV' + i) + ' ' + devName(v[0]) + w;
       while (this.peek() === 0x5a) {
         this.p++; const i2 = this.u8(), v2 = this.operands();
         if (this.u8() !== 0x73 || v2.length !== 1) throw new BcUnknown(0x73, this.p - 1, 'select value 2');
         let w2 = '';
         while (this.peek() === 0x5b) { this.p++; const a = this.u8(), x = this.operands(); if (this.u8() !== 0x76) throw new BcUnknown(0x76, this.p - 1, 'select attr 2'); if (a === 7 || a === 8 || a === 9) w2 = '(' + x[0] + ')'; }
-        out += ',' + ({ 0: 'TAPE', 1: 'PRINT', 2: 'LIST', 3: 'CO' }[i2] || 'DEV' + i2) + ' ' + devName(v2[0]) + w2;
+        out += ',' + (BC_DEVN[i2] || 'DEV' + i2) + ' ' + devName(v2[0]) + w2;
       }
       return out;
     }
@@ -374,7 +376,9 @@ class BcDec {
         if (k !== 0x79 && k !== 0x7a) { if (first) throw new BcUnknown(k, this.p - 1, 'bool op'); this.p = save; this.st.length = ssz; break; }
         const c = this.u8(), nm = (k === 0x7a ? BC_BOOLN : BC_ARITHN)[c];
         if (nm === undefined) throw new BcUnknown(k, this.p - 2, 'bool code ' + c.toString(16));
-        res += ' ' + nm + ' ' + v[0];
+        let val = String(v[0]);
+        if (c >= 0x10 && c <= 0x1f && (bcIsHex(val) || val.startsWith('"'))) val = 'ALL(' + (bcIsHex(val) ? val.slice(4, -1) : bcHex(bcStrip(val))) + ')';
+        res += ' ' + nm + ' ' + val;
       }
       return ops[0] + '=' + res;
     }
@@ -417,7 +421,7 @@ class BcDec {
     }
     if (t === 0x4b && ops.length === 2) { this.u8(); const fl = this.u8(); return '$TRAN(' + ops[0] + ',' + ops[1] + ')' + (fl === 0 ? 'R' : ''); }
     if (t === 0xab) {                                          // PRINTUSING
-      const m = this.u8(), x = this.u8(); this.u8(); const lo = this.u8(), hi = this.u8();
+      const m = this.u8(), x0 = this.u8(), y0 = this.u8(), lo = this.u8(), hi = this.u8(); const smask = x0 | (y0 << 8);   // bit j: a ';' after the format (j=0) or after item j
       let to = '', spec;
       if (m & 4) to = 'TO ' + ops.shift() + ',';
       if (m & 1) spec = ops.length ? String(ops.shift()) : '""'; else spec = String(bcBcdLine(lo, hi));
@@ -428,7 +432,11 @@ class BcDec {
         if (k !== 0xaa && k !== 0xac) throw new BcUnknown(k, this.p - 1, 'using item');
         for (const q of v) items.push(String(q));
       }
-      return 'PRINTUSING ' + to + spec + (items.length ? ((x & 1) ? ';' : ',') + items.join(',') : '') + ((x & 2) ? ';' : '');
+      let out = 'PRINTUSING ' + to + spec;
+      items.forEach((it, i) => { out += ((smask >> i) & 1 ? ';' : ',') + it; });
+      if ((smask >> items.length) & 1 && (items.length || !(smask & 1))) out += ';';
+      else if (!items.length && (smask & 1)) out += ';';
+      return out;
     }
     if (t === 0xb6 && ops.length === 1) {                      // RESTORE LINE n[,k]
       const kind = this.u8(); let ln;
@@ -491,12 +499,6 @@ class BcDec {
     if ((t === 0x70 || t === 0x73) && ops.length === 2) {
       let first = ops[0] + '=' + ops[1];
       if (ops[0] instanceof BcSub && ops[0].bin) { let v = String(ops[1]); if (v.startsWith('BIN(') && v.endsWith(')')) v = v.slice(4, -1); first = 'BIN(' + ops[0] + ')=' + v; }
-      if (this.peek() === 0x53 || this.peek() === 0x54) {      // FOR: limit, step, 5c var
-        const lim = this.operands();
-        if (this.u8() !== 0x5c) throw new BcUnknown(this.b[this.p - 1], this.p - 1, 'for end');
-        this.u8(); this.u8(); const step = lim.length > 1 ? String(lim[1]) : '1';
-        return 'FOR ' + first + ' TO ' + lim[0] + (step === '1' ? '' : ' STEP ' + step);
-      }
       if (this.more() && this.peek() !== 0x61 && this.peek() !== 0x77) {   // FOR whose limit does not start with a constant or numeric variable
         const save = this.p, ssz = this.st.length; let lim = null;
         try { lim = this.operands(); if (this.u8() !== 0x5c || !lim.length) lim = null; } catch (e) { lim = null; }
@@ -543,7 +545,7 @@ class BcDec {
           if (a === 7 || a === 8) w = '(' + x[0] + ')';
         }
         let d2 = String(v2[0]); d2 = d2.startsWith('"') ? bcStrip(d2) : '<' + d2 + '>';
-        out.push(({ 0: 'TAPE', 1: 'PRINT', 2: 'LIST', 3: 'CO' }[i2] || 'DEV' + i2) + ' ' + d2 + w);
+        out.push((BC_DEVN[i2] || 'DEV' + i2) + ' ' + d2 + w);
       }
       return 'SELECT ' + out.join(',');
     }
@@ -595,14 +597,16 @@ class BcDec {
     const core = this.p;
     const me = { raw, inv, tgt: end, lineForm: false };
     if (inner.length === 1 && inner[0] instanceof BcIf) {                                       // the chain continues
-      const io = inner[0]; const r = new BcIf([me].concat(io.flat), io.thenStart, io.body, io.els); r.coreEnd = io.coreEnd; return r;
+      const io = inner[0]; const r = new BcIf([me].concat(io.flat), io.thenStart, io.body, io.els); r.coreEnd = io.coreEnd; r.noJump = io.noJump; return r;
     }
     if (inner.length && inner[inner.length - 1] === '<ELSE>') {
       inner.pop(); const ee = this.elseEnd, els = [];
-      while (this.p < ee) { if (this.u8() !== 0x61) throw new BcUnknown(this.b[this.p - 1], this.p - 1, 'else header'); this.u8(); els.push(this.statement()); }
+      while (this.p < ee) { if (!this.nohdr) { if (this.u8() !== 0x61) throw new BcUnknown(this.b[this.p - 1], this.p - 1, 'else header'); this.u8(); } els.push(this.statement()); }
       const r = new BcIf([me], p0, inner.map(String).join(':'), els.map(String).join(':')); r.coreEnd = core; return r;
     }
-    const r = new BcIf([me], p0, inner.map(String).join(':')); r.coreEnd = core; return r;
+    const r = new BcIf([me], p0, inner.map(String).join(':')); r.coreEnd = core;
+    r.noJump = inner.length > 0 && /^(LOAD|GOTO|RETURN|END|STOP)(?![A-Z0-9$])/.test(String(inner[inner.length - 1]));   // no jump over an ELSE part was compiled after a statement that never falls through
+    return r;
   }
 
   static matop(x) {
@@ -787,11 +791,27 @@ class BcDec {
   }
 
   printStmt() {
-    const items = [], matItems = [], matSep = []; let nl = false, saw9e = false;
+    let items = [], matItems = [], matSep = []; let nl = false, saw9e = false; const segs = [];
+    const fmt = () => {
+      if (matItems.length) { let m = 'MAT PRINT '; matItems.forEach((v, i) => { m += v + (i < matItems.length - 1 ? matSep[i] : (matSep[i] === ';' ? ';' : '')); }); return m; }
+      if (saw9e && items.length === 1 && String(items[0]).startsWith('HEXOF(')) return 'HEXPRINT ' + String(items[0]).slice(6, -1);
+      let out = '';
+      for (const it0 of items) {
+        const it = String(it0);
+        if (it === ',') { out += ','; continue; }
+        out += (out && !out.endsWith(',') ? ';' : '') + it;
+      }
+      if (items.length && !nl && !out.endsWith(',')) out += ';';
+      return ('PRINT ' + out).replace(/\s+$/, '');
+    };
     while (this.more()) {
       const t = this.u8();
       if (t === 0xb4) break;
-      if (t === 0x9e || t === 0x9f) { nl = true; if (t === 0x9e) saw9e = true; continue; }
+      if (t === 0x9e || t === 0x9f) {                       // end of a PRINT; the compiler may keep the next PRINT in the same record
+        nl = true; if (t === 0x9e) saw9e = true;
+        if (this.more() && this.peek() !== 0xb4) { segs.push(fmt()); items = []; matItems = []; matSep = []; nl = false; saw9e = false; }
+        continue;
+      }
       if (t === 0xa7) { items.push(','); continue; }
       if (t === 0xa4) { items.push(''); continue; }
       if (t === 0xa0 || t === 0xa2 || t === 0xa5 || t === 0xa1 || t === 0xc5) {
@@ -808,16 +828,8 @@ class BcDec {
       if (this.exprToken(t)) continue;
       throw new BcUnknown(t, this.p - 1, 'print');
     }
-    if (matItems.length) { let m = 'MAT PRINT '; matItems.forEach((v, i) => { m += v + (i < matItems.length - 1 ? matSep[i] : (matSep[i] === ';' ? ';' : '')); }); return m; }
-    if (saw9e && items.length === 1 && String(items[0]).startsWith('HEXOF(')) return 'HEXPRINT ' + String(items[0]).slice(6, -1);
-    let out = '';
-    for (const it0 of items) {
-      const it = String(it0);
-      if (it === ',') { out += ','; continue; }
-      out += (out && !out.endsWith(',') ? ';' : '') + it;
-    }
-    if (items.length && !nl && !out.endsWith(',')) out += ';';
-    return ('PRINT ' + out).replace(/\s+$/, '');
+    segs.push(fmt());
+    return segs.join(':');
   }
 }
 
@@ -837,8 +849,8 @@ function bcTokensText(b, tokens) {
 /* one line body -> statement text (throws BcUnknown when it meets something it does not understand).
    base / starts: absolute offset of the body in the program and a Map(offset -> line number) of all bodies, used to
    resolve relative jumps (GOTO / KEYIN / IF ... THEN <earlier line>); optional. */
-function decompileBody(body, lineno, base, starts, tokens) {
-  const d = new BcDec(body); d.curline = lineno || 0; d.base = base || 0; d.starts = starts || null; d.tokens = tokens || null; const out = []; let lastIdx = -1, prevIf = false, pend = '', pendNn = -1, merge = false;
+function decompileBody(body, lineno, base, starts, tokens, nohdr) {
+  const d = new BcDec(body); d.nohdr = !!nohdr; d.curline = lineno || 0; d.base = base || 0; d.starts = starts || null; d.tokens = tokens || null; const out = []; let lastIdx = -1, prevIf = false, pend = '', pendNn = -1, merge = false, elseNext = false;
   let indent = '';
   if (body[0] === 0xd3) { indent = ' '.repeat(body[1]); d.p = 2; }
   if (body[d.p] === 0xcb) { d.p++; const n = d.u16(), st0 = d.p; return '%' + d.imageText(st0, n); }
@@ -846,7 +858,7 @@ function decompileBody(body, lineno, base, starts, tokens) {
     const t = d.u8();
     if (t === 0x77) break;
     if (t === 0xd3) { pendNn = d.u8(); continue; }
-    if (t === 0xd4) { d.u8(); continue; }
+    if (t === 0xd4 || (nohdr && t === 0x61)) { d.u8(); continue; }
     if (t === 0x20 && d.tokens) {                              // a statement kept in Wang tokenized form
       const q = d.p; d.u16();
       const e = (body.length >= 3 && body[body.length - 3] === 0x77 && body[body.length - 2] === 0 && body[body.length - 1] === 0) ? body.length - 3 : body.length;
@@ -856,10 +868,15 @@ function decompileBody(body, lineno, base, starts, tokens) {
     let idx;
     if (t !== 0x61) {
       const pcRem = out.length && out[out.length - 1] === 'REM ';
-      if (!prevIf && !pcRem) throw new BcUnknown(t, d.p - 1, 'stmt header');
-      d.p--; idx = lastIdx; if (pcRem) { merge = true; }
-    } else idx = d.u8();
-    let s = String(d.statement());
+      if (!prevIf && !pcRem && !nohdr) throw new BcUnknown(t, d.p - 1, 'stmt header');
+      d.p--; idx = (nohdr && !(out.length && out[out.length - 1] === 'ERROR')) ? lastIdx + 1 : lastIdx; if (pcRem) { merge = true; }
+    } else { idx = d.u8(); if (d.peek() === 0x77) continue; }
+    const sobj = d.statement(); let s = String(sobj);
+    if (elseNext) { elseNext = false; s = 'ELSE ' + s; }
+    if (sobj instanceof BcIf && sobj.noJump && !sobj.els && d.more()) {
+      let q = d.p; while (q + 1 < body.length && (body[q] === 0x61 || (nohdr && body[q] === 0xd4))) q += 2;
+      if (q < body.length && body[q] !== 0x77 && body[q] !== 0x51 && (nohdr || body[d.p] === 0x61)) elseNext = true;
+    }
     if (merge) { merge = false; out.pop(); s = 'REM $PC ' + s; }
     if (out.length && out[out.length - 1] === 'ERROR' && idx === lastIdx) { out[out.length - 1] = 'ERROR ' + s; continue; }
     lastIdx = idx; prevIf = s.startsWith('IF ');
@@ -884,10 +901,13 @@ function decompileProgram(bytes, tokens) {
     recs.push({ no, base: p + 4, body: bytes.subarray(p + 4, p + 4 + len) }); p += 4 + len;
   }
   const starts = new Map(); for (const r of recs) starts.set(r.base, r.no);
+  // without the compiler's "statement numbers" option the statements carry no 61 nn header
+  let nohdr = false;
+  for (const r of recs) { let q = 0; if (r.body[0] === 0xd3) q = 2; const f = r.body[q]; if (f === 0xcb || f === 0x77) continue; if (f !== 0x61 && f !== 0x20 && f !== 0xd4) { nohdr = true; break; } }
   const lines = []; let failed = 0;
   for (const r of recs) {
     let text;
-    try { text = bcEscape(decompileBody(r.body, r.no, r.base, starts, tokens)); }
+    try { text = bcEscape(decompileBody(r.body, r.no, r.base, starts, tokens, nohdr)); }
     catch (e) { failed++; text = 'REM *** NOT DECODED (' + (e.why || e.message) + ') ***'; }
     lines.push(r.no + text);
   }

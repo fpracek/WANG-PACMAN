@@ -93,7 +93,11 @@ class Parser {
       case 'END': return {t:'end'};
       case 'STOP': { this.ws(); if(s[this.i]==='"') this.i=s.indexOf('"',this.i+1)+1; return {t:'stop'}; }
       case 'LOAD': { this.ws(); if(s.startsWith('RUN',this.i)){ this.i+=3; return {t:'loadrun'}; }
-        if(s[this.i]==='T') this.i++; this.ws(); if(s[this.i]!=='"') this.err('file name expected'); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1; return {t:'load', name}; }
+        if(s[this.i]==='T') this.i++; this.ws(); if(s[this.i]!=='"') this.err('file name expected'); const j=s.indexOf('"',this.i+1); const name=s.slice(this.i+1,j); this.i=j+1;
+        // overlay form: LOAD T"name" [from[,to]] [BEG line]
+        this.ws(); let from, to, beg; const mr=/^(\d+)\s*(?:,\s*(\d+))?/.exec(s.slice(this.i)); if(mr){ this.i+=mr[0].length; from=parseInt(mr[1],10); to=mr[2]!==undefined?parseInt(mr[2],10):9999; }
+        this.ws(); if(s.startsWith('BEG',this.i)){ this.i+=3; this.ws(); const mb=/^\d+/.exec(s.slice(this.i)); if(!mb) this.err('line number expected'); this.i+=mb[0].length; beg=parseInt(mb[0],10); }
+        return (from!==undefined||beg!==undefined) ? {t:'load', name, from:from===undefined?0:from, to:to===undefined?9999:to, beg} : {t:'load', name}; }
       case 'SELECT': { this.ws(); const rest=s.slice(this.i);
         const m2=/^(PRINT|LIST|CO|INPUT|CI)\s*\/?(\d{3})/.exec(rest) || /^(P)\s+\/?(\d{3})/.exec(rest);
         if(m2){ this.i+=m2[0].length; while(this.i<s.length && s[this.i]!==':') this.i++; return {t:'select', kind:(m2[1]==='P'?'PRINT':m2[1]), addr:m2[2]}; }
@@ -277,7 +281,7 @@ class Interp {
         else if(st.t==='deffn'){ deffn.set(st.n,{li:idx,si:si+1,params:st.params}); }
       });
     }
-    return {name, lines, lineMap, data, dataStart, deffn};
+    return {name, lines, lineMap, data, dataStart, deffn, entries};
   }
   /* reads a text listing: "NNN statements" per line, non-printable bytes as \xHH */
   /* WangEmu's `wvdutil listd` pretty-prints: lines are wrapped at 78 columns ("     " + rest) and every statement after
@@ -322,6 +326,16 @@ class Interp {
     for(const k of [...this.nums.keys()]) if(!this.com.has(k)) this.nums.delete(k);
     for(const k of [...this.strs.keys()]) if(!this.com.has(k)){ this.strs.delete(k); this.slen.delete(k); }
     for(const k of [...this.arrs.keys()]) if(!this.com.has('('+k)) this.arrs.delete(k);
+  }
+  /* LOAD T"name" from,to BEG line: the lines from..to of the file replace the same range of the program in memory; variables are kept;
+     execution continues at BEG (or at the first line) */
+  overlay(st){
+    const other=this.compile(st.name), cur=this.prog;
+    const keep=cur.entries.filter(e=>!(e.no>=st.from && e.no<=st.to)), add=other.entries.filter(e=>e.no>=st.from && e.no<=st.to);
+    const merged=keep.concat(add).sort((a,b)=>a.no-b.no);
+    this.prog=this.buildProgram(cur.name, merged, this.patches?.[cur.name]||{});
+    this.gstack=[]; this.fstack=[]; this.dpos=0; this.si=0; this.li=0;
+    if(st.beg!==undefined){ const L=this.prog.lines; let k=L.findIndex(l=>l.no>=st.beg); this.li = k<0 ? L.length : k; }
   }
   start(name){
     this.runId++; this.nums.clear(); this.strs.clear(); this.slen.clear(); this.arrs.clear(); this.com.clear();
@@ -449,7 +463,7 @@ class Interp {
       case 'matset': this.arr(st.name).data.fill(st.v); return;
       case 'matcopy': { const a=this.arr(st.name), b=this.arr(st.src); for(let k=0;k<a.data.length;k++) a.data[k]=b.data[k]; return; }
       case 'dim': for(const d of st.decl) this.declare(d,st.com); return;
-      case 'load': this.load(st.name); return;
+      case 'load': if(st.from!==undefined) this.overlay(st); else this.load(st.name); return;
       case 'loadrun':   // LOAD RUN: start the program again from its first line, with clean variables
         if(this.disk.status(this.prog.name)===1) this.load(this.prog.name);
         else { this.clearVars(); this.gstack=[]; this.fstack=[]; this.dpos=0; this.li=0; this.si=0; }
