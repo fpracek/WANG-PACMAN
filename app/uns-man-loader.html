@@ -494,7 +494,7 @@ class BcDec {
       if (kind === 1 || kind === 9 || kind === 0x11 || kind === 0x19) st.push(String(this.u8()));
       else if (kind === 2 || kind === 0x12 || kind === 0x0a) st.push(String(this.u16()));
       else if (kind === 3 || kind === 0x0b) { const v = this.u16(); st.push(String(v > 32767 ? v - 65536 : v)); }
-      else if (kind === 4) { const v = (this.u16() + this.u16() * 65536); st.push(String(v >= 2147483648 ? v - 4294967296 : v)); }
+      else if (kind === 4 || kind === 0x0c) { const v = (this.u16() + this.u16() * 65536); st.push(String(v >= 2147483648 ? v - 4294967296 : v)); }
       else if (kind === 0) {
         let e = this.u16(); if (e > 32767) e -= 65536;
         let m = 0; for (let i = 5; i >= 0; i--) m = m * 256 + this.b[this.p + i]; this.p += 6;
@@ -519,7 +519,7 @@ class BcDec {
     else if (t === 0xc5) { /* load of a string reference: no text */ }
     else if (t === 0x8f && (this.peek() === 3 || this.peek() === 5) && this.p + 1 < this.b.length && this.b[this.p + 1] === 0x5a) {
       const k = this.u8(); st.push(k === 3 ? 'DATE' : 'TIME'); this.p += 2;
-    } else if (t === 0x55 && [5, 6, 0x0b, 0x0c, 0x0d, 0x15, 0x16].indexOf(this.peek()) >= 0 && this.p + 1 < this.b.length && this.b[this.p + 1] === 0) {
+    } else if (t === 0x55 && [5, 6, 0x0b, 0x0c, 0x0d, 0x15, 0x16].indexOf(this.peek()) >= 0 && this.p + 1 < this.b.length && (this.b[this.p + 1] === 0 || this.b[this.p + 1] === 0x10)) {
       const k = this.u8(); this.u8(); st.push({ 5: 'ERR', 6: 'END', 0x0b: '#PART', 0x0c: '#TERM', 0x0d: '#ID', 0x15: 'SPACEK', 0x16: '#GOLDKEY' }[k]);
     } else if (t === 0x28) {
       const fid = this.u8(); this.u16(); st.push('FN' + String.fromCharCode(fid + 0x37) + '(' + this.pop() + ')');
@@ -528,6 +528,7 @@ class BcDec {
       const r = m !== undefined && m < 3 ? '-(' + x + ')' : '-' + x; this.precs.set(r, 3); st.push(r);
     } else if (t === 0x5a && this.peek() === 0x0d) { this.u8(); st.push('$PSTAT(' + this.pop() + ')'); }
     else if (t === 0x5a && this.peek() === 0x08) { this.u8(); st.push('$MSG'); }
+    else if (t === 0x9a) { const rc = this.u8(), b = this.pop(), a = this.pop(); st.push('POS(-' + a + (BC_RELS[rc] || '=') + b + ')'); }
     else if (t === 0x99) { const rc = this.u8(), b = this.pop(), a = this.pop(); st.push('POS(' + a + (BC_RELS[rc] || '=') + b + ')'); }
     else if (t === 0x25) st.push('BIN(' + this.pop() + ',2)');
     else if (t === 0x2e) st.push(new BcCat(this.pop()));
@@ -545,6 +546,7 @@ class BcDec {
       const v = this.u16(), top = this.pop();
       if (top instanceof BcSub) { if (top.ln !== null) top.bin = true; else top.ln = String(v); st.push(top); } else st.push(new BcSub(top, null, String(v)));
     } else if (BC_BIN[t] !== undefined) { this.u8(); const b = this.pop(), a = this.pop(); st.push(this.binop(t, a, b)); }
+    else if (t === 0x89) { const f = this.u8(); this.u8(); const nm = { 0: 'FIX', 1: 'RND', 2: 'LOG', 4: 'EXP', 5: 'SIN', 6: 'COS', 7: 'TAN', 8: 'SQR', 9: 'ARCTAN', 10: 'ARCSIN', 11: 'ARCCOS' }[f]; if (!nm) throw new BcUnknown(0x89, this.p - 2, 'function ' + f); st.push(nm + '(' + this.pop() + ')'); }
     else if (BC_FUNC[t]) { const [nm, ex, ar] = BC_FUNC[t]; this.p += ex; const a = []; for (let i = 0; i < ar; i++) a.unshift(this.pop()); st.push(nm + '(' + a.map(String).join(',') + ')'); }
     else return false;
     return true;
@@ -600,6 +602,25 @@ class BcDec {
       return 'REM ' + s;
     }
     if (t === 0xb7) return 'RETURN';
+    if (t === 0x7e || t === 0x7c || t === 0x87 || t === 0x82 || t === 0x88 || t === 0x8a || t === 0x7f) {   // MAT a=b, a=b+c, a=TRN(b), a=INV(b), a=IDN
+      if (t === 0x8a) this.u8();
+      const nref = (t === 0x7e || t === 0x88 || t === 0x8a) ? 2 : (t === 0x7f ? 1 : 3), r = [];
+      for (let i = 0; i < nref; i++) { const d = this.u8(), l = this.u8(); r.push(bcVname(d, l)); }
+      const dst = r[nref - 1];
+      const rhs = t === 0x7f ? 'IDN' : t === 0x7e ? r[0] : t === 0x88 ? 'TRN(' + r[0] + ')' : t === 0x8a ? 'INV(' + r[0] + ')' : r[1] + ({ 0x7c: '+', 0x87: '-', 0x82: '*' })[t] + r[0];
+      return 'MAT ' + dst + '=' + rhs;
+    }
+    if (t === 0xaf || t === 0xb1) {                            // MAT READ a,b
+      this.p--; const names = [];
+      while (this.peek() === 0xaf || this.peek() === 0xb1) { this.p++; const d = this.u8(), l = this.u8(); names.push(bcVname(d, l)); }
+      return 'MAT READ ' + names.join(',');
+    }
+    if (t === 0xcd && this.peek() === 0x06) {                  // LIST [S|D] from,to
+      this.p += 2; const kd = this.u8(); this.u8(); const a = bcBcdLine(this.u8(), this.u8()), z = bcBcdLine(this.u8(), this.u8());
+      const pre = kd === 1 ? 'S' : kd === 2 ? 'D' : '';
+      if (a === 0 && z === 9999) return 'LIST' + (pre ? ' ' + pre : '');
+      return 'LIST ' + pre + (a === z ? a : a + ',' + z);
+    }
     if (t === 0x4a) { this.u8(); return '$RELEASETERMINAL'; }
     if (t === 0x2d) { const d = this.u8(), l = this.u8(); return 'COM CLEAR ' + bcVname(d, l) + (((d >> 4) === 2 || (d >> 4) === 3) ? '()' : ''); }
     if (t === 0x8f && this.peek() === 1) { this.u8(); return 'RETURN CLEAR ALL'; }
@@ -626,6 +647,11 @@ class BcDec {
     if (t === 0x51) { this.p += 6; return 'ERROR'; }
     if (t === 0x5a) {
       const i = this.u8(), v = this.operands();
+      if (i === 8 && this.peek() === 0x74 && v.length === 1) {
+        this.u8(); this.u8(); this.u8(); const val = this.operands();
+        if (this.u8() !== 0x73 || this.u8() !== 0x75 || val.length !== 1) throw new BcUnknown(0x74, this.p - 1, 'msg assign');
+        return '$MSG,' + v[0] + '=' + val[0];
+      }
       if (this.u8() !== 0x73 || v.length !== 1) throw new BcUnknown(0x73, this.p - 1, 'select value');
       if (i === 9) return '$PSTAT=' + v[0];
       let w = '';
@@ -639,7 +665,9 @@ class BcDec {
       while (this.peek() === 0x5a) {
         this.p++; const i2 = this.u8(), v2 = this.operands();
         if (this.u8() !== 0x73 || v2.length !== 1) throw new BcUnknown(0x73, this.p - 1, 'select value 2');
-        out += ',' + ({ 0: 'TAPE', 1: 'PRINT', 2: 'LIST', 3: 'CO' }[i2] || 'DEV' + i2) + ' ' + devName(v2[0]);
+        let w2 = '';
+        while (this.peek() === 0x5b) { this.p++; const a = this.u8(), x = this.operands(); if (this.u8() !== 0x76) throw new BcUnknown(0x76, this.p - 1, 'select attr 2'); if (a === 7 || a === 8 || a === 9) w2 = '(' + x[0] + ')'; }
+        out += ',' + ({ 0: 'TAPE', 1: 'PRINT', 2: 'LIST', 3: 'CO' }[i2] || 'DEV' + i2) + ' ' + devName(v2[0]) + w2;
       }
       return out;
     }
@@ -753,17 +781,27 @@ class BcDec {
       if (k === 0x6f) { let o = String(v[0]); o = bcIsHex(o) ? o.slice(4, -1) : bcHex(bcStrip(o)); return ops.map(String).join(',') + '=ALL(' + o + ')'; }
       return ops.map(String).join(',') + '=' + v[0];
     }
+    if (t === 0xc8 && ops.length === 3) { if (this.u8() !== 0x30) throw new BcUnknown(0xc8, this.p - 1, 'convert expr'); this.u8(); return 'CONVERT ' + ops[0] + ' TO ' + ops[1] + ',(' + ops[2] + ')'; }
     if (t === 0x4c && ops.length === 2) {                      // T=A op B  (copy A to T, then apply op with B)
-      if (this.u8() !== 0x73) throw new BcUnknown(0x4c, this.p - 1, 'bool copy');
-      const v = this.operands(), k = this.u8();
-      if (k !== 0x79 && k !== 0x7a) throw new BcUnknown(k, this.p - 1, 'bool op');
-      const c = this.u8(), nm = (k === 0x7a ? BC_BOOLN : BC_ARITHN)[c];
-      if (nm === undefined) throw new BcUnknown(k, this.p - 2, 'bool code ' + c.toString(16));
-      return ops[0] + '=' + ops[1] + ' ' + nm + ' ' + v[0];
+      const cp = this.u8(); if (cp !== 0x73 && cp !== 0x6f) throw new BcUnknown(0x4c, this.p - 1, 'bool copy');
+      if (cp === 0x6f) { const o = String(ops[1]); ops[1] = 'ALL(' + (bcIsHex(o) ? o.slice(4, -1) : o.startsWith('"') ? o : o) + ')'; }
+      let res = String(ops[1]);
+      for (let first = true; ; first = false) {
+        const save = this.p, ssz = this.st.length; let v;
+        try { v = this.operands(); } catch (e) { v = []; }
+        if (!v.length) { this.p = save; this.st.length = ssz; if (first) throw new BcUnknown(this.peek() || 0, this.p, 'bool operand'); break; }
+        let k = this.u8(); if (k === 0x4c) k = this.u8();
+        if (k !== 0x79 && k !== 0x7a) { if (first) throw new BcUnknown(k, this.p - 1, 'bool op'); this.p = save; this.st.length = ssz; break; }
+        const c = this.u8(), nm = (k === 0x7a ? BC_BOOLN : BC_ARITHN)[c];
+        if (nm === undefined) throw new BcUnknown(k, this.p - 2, 'bool code ' + c.toString(16));
+        res += ' ' + nm + ' ' + v[0];
+      }
+      return ops[0] + '=' + res;
     }
     if (t === 0x8f && ops.length === 1) {
       const k = this.u8();
       if (k === 0x10) return 'MAT ' + String(ops[0]).replace('()', '') + '=ZER';
+      if (k === 0x11) return 'MAT ' + String(ops[0]).replace('()', '') + '=CON';
       if (k === 0x13) return '$BREAK' + (String(ops[0]) === '1' ? '' : ops[0]);
       throw new BcUnknown(0x8f, this.p - 2, 'op 8f ' + k.toString(16));
     }
@@ -784,7 +822,7 @@ class BcDec {
       if (bcIsHex(o1) || o1.startsWith('"')) {
         const v = bcIsHex(o1) ? o1.slice(4, -1) : bcHex(bcStrip(o1));
         if (arrayish) return c >= 0x10 ? tgt + '=' + nm + ' ALL(' + v + ')' : tgt + '=' + nm + ' HEX(' + v + ')';
-        if (v.length > 2) return tgt + '=' + nm + ' HEX(' + v + ')';
+        if (v.length > 2 || c < 0x10) return tgt + '=' + nm + ' HEX(' + v + ')';
         return nm + '(' + tgt + ',' + v + ')';
       }
       if (ops[1] instanceof BcSub) return tgt + '=' + nm + ' ' + o1;
@@ -821,7 +859,7 @@ class BcDec {
     if ((t === 0xae || t === 0xb0) && ops.length === 1) {      // READ
       const tg = [String(ops[0])];
       let k = this.u8(); if (k !== 0x70 && k !== 0x73) throw new BcUnknown(0x70, this.p - 1, 'read store');
-      while ([0x54, 0x59, 0x56, 0x63, 0x64].indexOf(this.peek()) >= 0) {
+      while ([0x53, 0x54, 0x59, 0x56, 0x63, 0x64].indexOf(this.peek()) >= 0) {
         const o2 = this.operands();
         if (o2.length !== 1) throw new BcUnknown(0xae, this.p - 1, 'read list');
         const k1 = this.u8(), k2 = this.u8();
@@ -841,8 +879,15 @@ class BcDec {
       const mm = x => (x instanceof BcSub && String(x.s).endsWith('()')) ? x.s + ' (' + (x.start !== null ? x.start : '1') + (x.ln !== null ? ',' + x.ln : '') + ')' : String(x);
       return 'MAT MOVE ' + ops.slice(0, -1).map(mm).join(',') + ' TO ' + mm(ops[ops.length - 1]);
     }
+    if (t === 0x85 && ops.length === 1) { const d1 = this.u8(), l1 = this.u8(), d2 = this.u8(), l2 = this.u8(); return 'MAT ' + bcVname(d2, l2) + '=(' + ops[0] + ')*' + bcVname(d1, l1); }
     if (t === 0x7d && ops.length === 2) { this.u8(); return 'MAT COPY ' + BcDec.matop(ops[0]) + ' TO ' + BcDec.matop(ops[1]); }
-    if (t === 0x62 && ops.length === 2) { const n = this.u8(); this.p += 3; return 'CONVERT ' + ops[0] + ' TO ' + ops[1] + ',(' + '#'.repeat(n) + ')'; }
+    if (t === 0x62 && ops.length === 2) {
+      const n = this.u8(), fl = this.u8(); let fmt = '';
+      if (fl === 8) fmt = '#'.repeat(n);
+      else if (fl >= 0x10 && fl <= 0x12) { for (let i = 0; i < n; i++) fmt += String.fromCharCode(this.u8()); this.p += 2; }
+      else throw new BcUnknown(0x62, this.p - 2, 'convert format');
+      this.p += 2; return 'CONVERT ' + ops[0] + ' TO ' + ops[1] + ',(' + fmt + ')';
+    }
     if (t === 0x30 && ops.length === 2) { this.u8(); return 'CONVERT ' + ops[0] + ' TO ' + ops[1]; }
     if (t === 0x6f && ops.length === 2) {
       const o = String(ops[1]);
@@ -871,6 +916,12 @@ class BcDec {
         if (this.u8() !== 0x5c) throw new BcUnknown(this.b[this.p - 1], this.p - 1, 'for end');
         this.u8(); this.u8(); const step = lim.length > 1 ? String(lim[1]) : '1';
         return 'FOR ' + first + ' TO ' + lim[0] + (step === '1' ? '' : ' STEP ' + step);
+      }
+      if (this.more() && this.peek() !== 0x61 && this.peek() !== 0x77) {   // FOR whose limit does not start with a constant or numeric variable
+        const save = this.p, ssz = this.st.length; let lim = null;
+        try { lim = this.operands(); if (this.u8() !== 0x5c || !lim.length) lim = null; } catch (e) { lim = null; }
+        if (lim) { this.u8(); this.u8(); const step = lim.length > 1 ? String(lim[1]) : '1'; return 'FOR ' + first + ' TO ' + lim[0] + (step === '1' ? '' : ' STEP ' + step); }
+        this.p = save; this.st.length = ssz;
       }
       return first;
     }
@@ -917,6 +968,32 @@ class BcDec {
       return 'SELECT ' + out.join(',');
     }
     if (t === 0xbe && ops.length === 1) return this.diskOp(ops[0]);
+    if (t === 0x49 && ops.length === 2) {                      // $PACK / $UNPACK (fmt) a$ FROM/TO items
+      this.u8(); this.u8(); const kk = this.u8(); const its = [];
+      for (;;) { const o = this.operands(); if (!o.length) break; if (this.u8() !== 0x30) throw new BcUnknown(this.b[this.p - 1], this.p - 1, 'pack item'); this.u8(); its.push(String(o[0])); }
+      const w = { 5: ['$UNPACK', 'D'], 4: ['$UNPACK', 'F'], 2: ['$PACK', 'D'], 1: ['$PACK', 'F'] }[kk];
+      if (!w || !its.length) throw new BcUnknown(0x49, this.p - 1, 'pack kind');
+      return w[0] + '(' + w[1] + '=' + ops[0] + ') ' + ops[1] + (kk >= 4 ? ' TO ' : ' FROM ') + its.join(',');
+    }
+    if (t === 0xbd && ops.length === 1) {                      // device address /xxx : $IF and VERIFY
+      const addr = String(ops[0]).startsWith('"') ? bcStrip(String(ops[0])) : String(ops[0]);
+      if (this.peek() === 0x8f) {
+        this.p++; if (this.u8() !== 0x07) throw new BcUnknown(0x8f, this.p - 1, '$IF');
+        this.p += 3;
+        const v = this.operands();
+        if (this.u8() !== 0x2a || this.u8() !== 0x02 || v.length !== 1) throw new BcUnknown(0x2a, this.p - 1, '$IF line');
+        const lo = this.u8(), hi = this.u8();
+        return '$IF ' + (String(v[0]) === '1' ? 'ON' : 'OFF') + ' /' + addr + ',' + bcBcdLine(lo, hi);
+      }
+      const o2 = this.operands();
+      if (this.peek() === 0x48) {
+        this.p += 4;
+        return '$GIO/' + addr + '(' + o2.map(x => { x = String(x); return bcIsHex(x) ? x.slice(4, -1) : x.startsWith('"') ? bcHex(bcStrip(x)) : x; }).join(',') + ')';
+      }
+      if (this.u8() !== 0xca) throw new BcUnknown(this.b[this.p - 1], this.p - 1, 'verify');
+      this.u8();
+      return 'VERIFY T/' + addr + (o2.length ? ',' + o2[0] : '');
+    }
     throw new BcUnknown(t, this.p - 1, 'after ' + ops.length + ' operands');
   }
 
@@ -1036,17 +1113,24 @@ class BcDec {
       const k = this.u8();
       if (k === 0x15 && ops2.length === 1) return String(fno) === '0' ? 'SCRATCH T' + ops2[0] : 'SCRATCH T#' + fno + ',' + ops2[0];
       if ((k === 0x16 || k === 0x17) && ops2.length === 2) return (k === 0x17 ? "SCRATCH DISK 'T#" : 'SCRATCH DISK T#') + fno + ',LS=' + ops2[0] + ',END =' + ops2[1];
+      if (k === 0x0b && !ops2.length) {
+        const ns = ['#' + fno];
+        while (this.peek() === 0x53 && this.b[this.p + 1] === 1 && this.b[this.p + 3] === 0xbe && this.b[this.p + 4] === 0x8f && this.b[this.p + 5] === 0x0b) { ns.push('#' + this.b[this.p + 2]); this.p += 6; }
+        return '$CLOSE' + ns.join(',');
+      }
       if (k === 0x12 && !ops2.length) return '$FORMATDISK T#' + fno;
       if (k === 0x24 && !ops2.length) return 'LIST SDC T#' + fno;
       if (k === 0x08 && !ops2.length) {
         if (this.peek() === 0x8f) {                              // $OPEN line,#n
           this.p++; this.u8();
-          if (this.u8() !== 0x69) throw new BcUnknown(0x69, this.p - 1, 'open line');
+          if (this.peek() !== 0x69) return '$OPEN #' + fno;
+          this.p++;
           const lo = this.u8(), hi = this.u8(); return '$OPEN ' + bcBcdLine(lo, hi) + ',#' + fno;
         }
         const src = this.operands();
         if (this.u8() !== 0xbe || this.u8() !== 0x8f || this.u8() !== 0x08) throw new BcUnknown(0xbe, this.p - 1, 'copy to');
-        const dst = this.operands(), kend = this.u8();
+        const dst = (this.peek() === 0x2f || this.peek() === 0x91 || this.peek() === 0x8f) ? [] : this.operands(), kend = this.u8();
+        if (kend === 0x8f) { if (this.u8() === 0x0a && src.length === 1 && !dst.length) return '$OPEN #' + fno + ',#' + src[0]; throw new BcUnknown(0x8f, this.p - 1, 'open pair'); }
         if (kend !== 0x2f && kend !== 0x91) throw new BcUnknown(kend, this.p - 1, 'copy end');
         this.u8();
         if (!src.length) throw new BcUnknown(0x08, this.p - 2, 'copy source');
@@ -1123,7 +1207,7 @@ class BcDec {
   }
 
   printStmt() {
-    const items = []; let nl = false, saw9e = false;
+    const items = [], matItems = [], matSep = []; let nl = false, saw9e = false;
     while (this.more()) {
       const t = this.u8();
       if (t === 0xb4) break;
@@ -1140,9 +1224,11 @@ class BcDec {
       if (t === 0x9c) { const n = this.u8(), args = []; for (let i = 0; i < (n === 2 ? 3 : 2); i++) args.unshift(this.pop()); items.push('AT(' + args.map(String).join(',') + (n === 1 ? ',' : '') + ')'); continue; }
       if (t === 0x9d) { const b = this.pop(), a = this.pop(); items.push('BOX(' + a + ',' + b + ')'); continue; }
       if (t === 0xa6) { items.push('TAB(' + this.pop() + ')'); continue; }
+      if (t === 0x83) { const fl = this.u8(), d = this.u8(), l = this.u8(); matItems.push(bcVname(d, l)); matSep.push((fl & 2) ? ',' : ';'); continue; }
       if (this.exprToken(t)) continue;
       throw new BcUnknown(t, this.p - 1, 'print');
     }
+    if (matItems.length) { let m = 'MAT PRINT '; matItems.forEach((v, i) => { m += v + (i < matItems.length - 1 ? matSep[i] : (matSep[i] === ';' ? ';' : '')); }); return m; }
     if (saw9e && items.length === 1 && String(items[0]).startsWith('HEXOF(')) return 'HEXPRINT ' + String(items[0]).slice(6, -1);
     let out = '';
     for (const it0 of items) {
@@ -1172,7 +1258,7 @@ function bcTokensText(b, tokens) {
    base / starts: absolute offset of the body in the program and a Map(offset -> line number) of all bodies, used to
    resolve relative jumps (GOTO / KEYIN / IF ... THEN <earlier line>); optional. */
 function decompileBody(body, lineno, base, starts, tokens) {
-  const d = new BcDec(body); d.curline = lineno || 0; d.base = base || 0; d.starts = starts || null; d.tokens = tokens || null; const out = []; let lastIdx = -1, prevIf = false, pend = '', pendNn = -1;
+  const d = new BcDec(body); d.curline = lineno || 0; d.base = base || 0; d.starts = starts || null; d.tokens = tokens || null; const out = []; let lastIdx = -1, prevIf = false, pend = '', pendNn = -1, merge = false;
   let indent = '';
   if (body[0] === 0xd3) { indent = ' '.repeat(body[1]); d.p = 2; }
   if (body[d.p] === 0xcb) { d.p++; const n = d.u16(), st0 = d.p; return '%' + d.imageText(st0, n); }
@@ -1180,6 +1266,7 @@ function decompileBody(body, lineno, base, starts, tokens) {
     const t = d.u8();
     if (t === 0x77) break;
     if (t === 0xd3) { pendNn = d.u8(); continue; }
+    if (t === 0xd4) { d.u8(); continue; }
     if (t === 0x20 && d.tokens) {                              // a statement kept in Wang tokenized form
       const q = d.p; d.u16();
       const e = (body.length >= 3 && body[body.length - 3] === 0x77 && body[body.length - 2] === 0 && body[body.length - 1] === 0) ? body.length - 3 : body.length;
@@ -1188,10 +1275,12 @@ function decompileBody(body, lineno, base, starts, tokens) {
     if (t === 0xcb) { const q = d.p, n = d.u16(); const txt = d.imageText(d.p, n); d.p = q + 2 + n; out.push('%' + txt); continue; }
     let idx;
     if (t !== 0x61) {
-      if (!prevIf) throw new BcUnknown(t, d.p - 1, 'stmt header');
-      d.p--; idx = lastIdx;
+      const pcRem = out.length && out[out.length - 1] === 'REM ';
+      if (!prevIf && !pcRem) throw new BcUnknown(t, d.p - 1, 'stmt header');
+      d.p--; idx = lastIdx; if (pcRem) { merge = true; }
     } else idx = d.u8();
-    const s = String(d.statement());
+    let s = String(d.statement());
+    if (merge) { merge = false; out.pop(); s = 'REM $PC ' + s; }
     if (out.length && out[out.length - 1] === 'ERROR' && idx === lastIdx) { out[out.length - 1] = 'ERROR ' + s; continue; }
     lastIdx = idx; prevIf = s.startsWith('IF ');
     if (pendNn >= 0) { const col = indent.length + out.join(':').length + 1; pend = ' '.repeat(Math.max(pendNn + 2 - col, 0)); pendNn = -1; }

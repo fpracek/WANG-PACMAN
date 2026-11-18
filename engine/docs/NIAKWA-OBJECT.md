@@ -44,9 +44,11 @@ Statements in a line: `61 <index 0,1,2..>` + payload. 166 of 171 programs (all w
 
 The decompiled source of each program is fed back to `B2C.EXE` (run under DOSBox) and the object code it produces is compared with the object code on the disk,
 ignoring the `D4 nn` markers that only B2C 2.00.04 writes and the skip / jump counts that depend on them. A line that compiles to the same bytes was decoded exactly,
-whatever the cosmetic differences from the original text. Result on 166 programs: of 9,908 lines, 9,800 decode, **9,670 (98.7%) recompile identically**, 130 differ
-and 108 are not decoded. About 33 of the differences are forms that B2C 2.00.04 refuses and keeps tokenized (not verifiable with that compiler); the rest are
+whatever the cosmetic differences from the original text. Result on 166 programs: of 9,908 lines, 9,887 decode, **9,754 (98.4% of all lines, 98.7% of the decoded ones) recompile identically**, 133 differ
+and 21 are not decoded. About 33 of the differences are forms that B2C 2.00.04 refuses and keeps tokenized (not verifiable with that compiler); the rest are
 compiler choices that cannot be reproduced from text (a TAB in a string literal becomes two blanks, the flag of `MAT COPY`, a `C5` before `A5` in some prints).
+
+Also found with the round trip: opcode `89` selects the numeric function by its first byte (1 RND, 2 LOG, 4 EXP, 5 SIN, 6 COS, 7 TAN, 8 SQR, 9 ARCTAN, 10 ARCSIN, 11 ARCCOS, 0 FIX); `$PACK`/`$UNPACK` = `49 nn 00 kk` + items with `30 xx` (kk 5/4 unpack D/F, 2/1 pack D/F); `$IF` and `VERIFY` follow `BD`; `MAT` operations have their own opcodes (`7C 7E 7F 82 85 87 88 8A AF B1`); `LIST` = `CD 06 00 kind 00 from to`; boolean chains repeat `7A code`.
 
 Rules found with the round trip: `D3 nn` = column of the statement (blanks = nn + 2 - current column); `$TRAN` flag 0 = `R`; `ALL(hex)` vs `ALL("c")` by the `DA` flag;
 `DSKIP` / `DBACKSPACE` sub-codes 00..05; `SAVE` flag 0 = `SAVE T`, 8 = `SAVE T()`, a non-zero file constant = `SAVE T#n,`; PRINTUSING flag bit 0 = `;` after the format, bit 1 = trailing `;`.
