@@ -96,7 +96,7 @@ p.addProgram('UNS-MAN', listingText);
 
 - `.bs2`: raw 256-byte sectors (the format Niakwa BASIC-2C uses for its "disk image files with a 2200 directory structure").
 - Raw sector dumps may carry other extensions (for example `.220`, as saved by some 2200 tools): images are recognised by content, not by name.
-- Disks written by Niakwa BASIC-2C may hold *compiled* programs (object code starting with `BC Rev x.yy.zz`). A partial decompiler (`src/bcdecomp.js`, format notes in `docs/NIAKWA-OBJECT.md`) turns them back into listings: on a test set of about 10,000 lines 98.6% of all lines recompile with Niakwa's own `B2C.EXE` to exactly the bytes on the disk, i.e. they are decoded exactly (99.8% of the lines decode at all); lines it does not understand are kept as `REM *** NOT DECODED ***`. `LOAD` says how many. The result is for reading, not a guarantee that the program runs.
+- Disks written by Niakwa BASIC-2C may hold *compiled* programs (object code starting with `BC Rev x.yy.zz`). A partial decompiler (`src/bcdecomp.js`, format notes in `docs/NIAKWA-OBJECT.md`) turns them back into listings: on a test set of about 10,000 lines 98.8% of the decodable lines recompile with Niakwa's own `B2C.EXE` to exactly the bytes on the disk, i.e. they are decoded exactly (99.8% of the lines decode at all); lines it does not understand are kept as `REM *** NOT DECODED ***`. `LOAD` says how many. The result is for reading, not a guarantee that the program runs.
 - `.wvd`: WangEmu virtual disks (256-byte `WANG` header, label, platters).
 
 Sector 0 describes the disk; the first sectors are the catalog (16-byte entries: state, program/data, first and last

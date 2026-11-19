@@ -44,13 +44,13 @@ Statements in a line: `61 <index 0,1,2..>` + payload. 166 of 171 programs (all w
 
 The decompiled source of each program is fed back to `B2C.EXE` (run under DOSBox) and the object code it produces is compared with the object code on the disk,
 ignoring the `D4 nn` markers that only B2C 2.00.04 writes and the skip / jump counts that depend on them. A line that compiles to the same bytes was decoded exactly,
-whatever the cosmetic differences from the original text. Result on 166 programs: of 9,908 lines, 9,888 decode, **9,768 (98.6% of all lines) recompile identically**, 120 differ
-and 20 are not decoded. A second disk (45 programs, 2,404 lines, many compiled without statement numbers) reaches 88.7%; the 37 lines kept tokenized
+whatever the cosmetic differences from the original text. Result on 166 programs: of 9,908 lines, 9,888 decode, **9,764 (98.8% of the 9,884 decodable lines) recompile identically**, 120 differ
+and 20 are not decoded. A second disk (45 programs, 2,404 lines, many compiled without statement numbers) reaches 89.3% with about 40 lines undecoded; the 37 lines kept tokenized
 by B2C 2.00.04 cannot be verified. Objects may carry `61 nn` / `D4 nn` markers anywhere between statements, or none at all; the decompiler skips them.
 The older compiler also omits the unreachable jump after `STOP`/`LOAD`/`GOTO`, merges consecutive PRINTs in one record, and uses `PRINTUSING` flag bits as a mask of `;` separators (bit 0 after the format, bit k after item k). About 33 of the differences are forms that B2C 2.00.04 refuses and keeps tokenized (not verifiable with that compiler); the rest are
 compiler choices that cannot be reproduced from text (a TAB in a string literal becomes two blanks, the flag of `MAT COPY`, a `C5` before `A5` in some prints).
 
-Also found with the round trip: opcode `89` selects the numeric function by its first byte (1 RND, 2 LOG, 4 EXP, 5 SIN, 6 COS, 7 TAN, 8 SQR, 9 ARCTAN, 10 ARCSIN, 11 ARCCOS, 0 FIX); `$PACK`/`$UNPACK` = `49 nn 00 kk` + items with `30 xx` (kk 5/4 unpack D/F, 2/1 pack D/F); `$IF` and `VERIFY` follow `BD`; `MAT` operations have their own opcodes (`7C 7E 7F 82 85 87 88 8A AF B1`); `LIST` = `CD 06 00 kind 00 from to`; boolean chains repeat `7A code`.
+Also found with the round trip: opcode `89` selects the numeric function by its first byte (1 RND, 2 LOG, 4 EXP, 5 SIN, 6 COS, 7 TAN, 8 SQR, 9 ARCTAN, 10 ARCSIN, 11 ARCCOS, 0 FIX); `$PACK`/`$UNPACK` = `49 nn 00 kk` + items with `30 xx` (kk 5/4 unpack D/F, 2/1 pack D/F); `$IF` and `VERIFY` follow `BD`; `MAT` operations have their own opcodes (`7C 7E 7F 82 85 87 88 8A AF B1`); `LIST` = `CD 06 00 kind 00 from to`; boolean chains repeat `7A code`. System variables are `5A nn` (0x13 `$DEVICE`, 0x15 `$SCREEN`, 0x16 `$KEYBOARD`, 0x18 `$ENVIRONMENT`, 0x19 `$MACHINE`, 0x1A `$BOXTABLE`, 0x1B `$OPTIONS`); `$SHELL a$` = `D7 01`, `$END` = `8F 14`.
 
 Rules found with the round trip: `D3 nn` = column of the statement (blanks = nn + 2 - current column); `$TRAN` flag 0 = `R`; `ALL(hex)` vs `ALL("c")` by the `DA` flag;
 `DSKIP` / `DBACKSPACE` sub-codes 00..05; `SAVE` flag 0 = `SAVE T`, 8 = `SAVE T()`, a non-zero file constant = `SAVE T#n,`; PRINTUSING flag bit 0 = `;` after the format, bit 1 = trailing `;`.

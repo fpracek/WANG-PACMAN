@@ -634,6 +634,7 @@ class BcUnknown extends Error {
 const BC_BIN = { 0x23: '+', 0xc4: '-', 0x92: '*', 0x47: '/', 0x90: 'MOD', 0x91: '^', 0x9b: '^' };
 const BC_FUNC = { 0x68: ['INT', 1, 1], 0x6c: ['LEN', 1, 1], 0x89: ['RND', 2, 1], 0x8c: ['MAX', 1, 2], 0x8e: ['MIN', 1, 2], 0x95: ['NUM', 1, 1], 0x21: ['ABS', 1, 1], 0xc9: ['VER', 1, 2], 0xbf: ['SGN', 1, 1] };
 const BC_DEVN = { 0: 'TAPE', 1: 'PRINT', 2: 'LIST', 3: 'CO', 4: 'CI', 5: 'INPUT', 20: 'TC' };
+const BC_SYSV = { 0x13: 'DEVICE', 0x15: 'SCREEN', 0x16: 'KEYBOARD', 0x18: 'ENVIRONMENT', 0x19: 'MACHINE', 0x1a: 'BOXTABLE', 0x1b: 'OPTIONS' };   // system variables, found with B2C
 const BC_RELS = { 1: '<', 2: '=', 3: '<=', 4: '>', 5: '<>', 6: '>=', 7: '<>' };
 const BC_INV = { '<': '>=', '=': '<>', '<=': '>', '>': '<=', '<>': '=', '>=': '<' };
 const BC_PREC = { '+': 1, '-': 1, '*': 2, '/': 2, '^': 3 };
@@ -747,6 +748,9 @@ class BcDec {
       const v = this.u16(), top = this.pop();
       if (top instanceof BcSub) { if (top.ln !== null) top.bin = true; else top.ln = String(v); st.push(top); } else st.push(new BcSub(top, null, String(v)));
     } else if (BC_BIN[t] !== undefined) { this.u8(); const b = this.pop(), a = this.pop(); st.push(this.binop(t, a, b)); }
+    else if ((t === 0xbe || t === 0xbd) && st.length && this.b[this.p] === 0x8f && this.b[this.p + 1] === 0x1f && this.b[this.p + 2] === 0x5a && this.b[this.p + 3] === 0x13) {   // $DEVICE(#n) / $DEVICE(/addr) as a value
+      this.p += 4; const a0 = this.pop(); st.push(t === 0xbe ? '$DEVICE(#' + a0 + ')' : '$DEVICE(/' + (String(a0).startsWith('"') ? bcStrip(String(a0)) : a0) + ')');
+    }
     else if (t === 0x89) { const f = this.u8(); this.u8(); const nm = { 0: 'FIX', 1: 'RND', 2: 'LOG', 4: 'EXP', 5: 'SIN', 6: 'COS', 7: 'TAN', 8: 'SQR', 9: 'ARCTAN', 10: 'ARCSIN', 11: 'ARCCOS' }[f]; if (!nm) throw new BcUnknown(0x89, this.p - 2, 'function ' + f); st.push(nm + '(' + this.pop() + ')'); }
     else if (BC_FUNC[t]) { const [nm, ex, ar] = BC_FUNC[t]; this.p += ex; const a = []; for (let i = 0; i < ar; i++) a.unshift(this.pop()); st.push(nm + '(' + a.map(String).join(',') + ')'); }
     else return false;
@@ -854,7 +858,10 @@ class BcDec {
         if (this.u8() !== 0x73 || this.u8() !== 0x75 || val.length !== 1) throw new BcUnknown(0x74, this.p - 1, 'msg assign');
         return '$MSG,' + v[0] + '=' + val[0];
       }
-      if (this.u8() !== 0x73 || v.length !== 1) throw new BcUnknown(0x73, this.p - 1, 'select value');
+      const endk = this.u8();
+      if ((endk !== 0x73 && !(endk === 0x6f && BC_SYSV[i])) || v.length !== 1) throw new BcUnknown(0x73, this.p - 1, 'select value');
+      if (endk === 0x6f) v[0] = String(v[0]).replace(/HEX\(([0-9A-F]+)\)$/, 'ALL($1)');
+      if (BC_SYSV[i] && i !== 0x13) { if (i === 0x18 && this.peek() === 0x8f && this.b[this.p + 1] === 0x26) this.p += 2; return '$' + BC_SYSV[i] + '=' + v[0]; }
       if (i === 9) return '$PSTAT=' + v[0];
       let w = '';
       while (this.peek() === 0x5b) {
@@ -880,7 +887,7 @@ class BcDec {
     }
     if (t === 0x6a) { const lo = this.u8(), hi = this.u8(); return 'GOSUB ' + bcBcdLine(lo, hi); }
     if (t === 0x8f) {
-      const k = this.u8(); const names = { 0: 'RETURN CLEAR', 2: 'CLEAR', 0x0c: '$CLOSE', 0x19: 'END', 0x1a: '$RELEASEPART' };
+      const k = this.u8(); const names = { 0: 'RETURN CLEAR', 2: 'CLEAR', 0x0c: '$CLOSE', 0x14: '$END', 0x19: 'END', 0x1a: '$RELEASEPART' };
       if (names[k] !== undefined) return names[k];
       throw new BcUnknown(0x8f, this.p - 2, 'stmt 8f ' + k.toString(16));
     }
@@ -1007,6 +1014,7 @@ class BcDec {
       if (k === 0x10) return 'MAT ' + String(ops[0]).replace('()', '') + '=ZER';
       if (k === 0x11) return 'MAT ' + String(ops[0]).replace('()', '') + '=CON';
       if (k === 0x13) return '$BREAK' + (String(ops[0]) === '1' ? '' : ops[0]);
+      if (k === 0x25 && this.u8() === 0x5a && this.u8() === 0x18 && this.u8() === 0x73) return ops[0] + '=$ENVIRONMENT';
       throw new BcUnknown(0x8f, this.p - 2, 'op 8f ' + k.toString(16));
     }
     if (t === 0x4a && ops.length === 1) { this.u8(); return '$RELEASETERMINAL TO ' + ops[0]; }
@@ -1170,6 +1178,22 @@ class BcDec {
       return 'SELECT ' + out.join(',');
     }
     if (t === 0xbe && ops.length === 1) return this.diskOp(ops[0]);
+    if (t === 0xbe && ops.length === 2 && this.peek() === 0x8f && this.b[this.p + 1] === 0x1f) {   // a$=$DEVICE(#n)
+      this.p += 2; if (this.u8() !== 0x5a || this.u8() !== 0x13 || this.u8() !== 0x73) throw new BcUnknown(0xbe, this.p - 1, '$DEVICE read');
+      return ops[0] + '=$DEVICE(#' + ops[1] + ')';
+    }
+    if (t === 0x5a && ops.length === 1 && BC_SYSV[this.peek()] && (this.b[this.p + 1] === 0x73 || this.b[this.p + 1] === 0xc5)) {
+      const i = this.u8(); let rhs = '$' + BC_SYSV[i];
+      if (this.peek() === 0xc5) {
+        this.p++; if (this.u8() !== 0x2e) throw new BcUnknown(0x2e, this.p - 1, 'sysvar concat');
+        const v = this.operands(), k = this.u8();
+        if ((k !== 0x73 && k !== 0x6f) || v.length !== 1) throw new BcUnknown(k, this.p - 1, 'sysvar concat end');
+        let tail = String(v[0]); if (k === 0x6f) tail = tail.replace(/HEX\(([0-9A-F]+)\)$/, 'ALL($1)');
+        return ops[0] + '=' + rhs + '&' + tail;
+      }
+      this.u8(); return ops[0] + '=' + rhs;
+    }   // a$=$SCREEN ...
+    if (t === 0xd7 && ops.length === 1) { this.u8(); return '$SHELL ' + ops[0]; }
     if (t === 0x49 && ops.length === 2) {                      // $PACK / $UNPACK (fmt) a$ FROM/TO items
       this.u8(); this.u8(); const kk = this.u8(); const its = [];
       for (;;) { const o = this.operands(); if (!o.length) break; if (this.u8() !== 0x30) throw new BcUnknown(this.b[this.p - 1], this.p - 1, 'pack item'); this.u8(); its.push(String(o[0])); }
@@ -1179,6 +1203,11 @@ class BcDec {
     }
     if (t === 0xbd && ops.length === 1) {                      // device address /xxx : $IF and VERIFY
       const addr = String(ops[0]).startsWith('"') ? bcStrip(String(ops[0])) : String(ops[0]);
+      if (this.peek() === 0x5a && this.b[this.p + 1] === 0x13) {            // $DEVICE(/addr)=value
+        this.p += 2; const v = this.operands();
+        if (this.u8() !== 0x73 || this.u8() !== 0x8f || this.u8() !== 0x20 || v.length !== 1) throw new BcUnknown(0x5a, this.p - 1, '$DEVICE store');
+        return '$DEVICE(/' + addr + ')=' + v[0];
+      }
       if (this.peek() === 0x8f) {
         this.p++; if (this.u8() !== 0x07) throw new BcUnknown(0x8f, this.p - 1, '$IF');
         this.p += 3;
@@ -1283,6 +1312,11 @@ class BcDec {
 
   diskOp(fno) {
     const ops2 = this.operands(); const t = this.u8();
+    if (t === 0x5a && !ops2.length && this.peek() === 0x13) {              // $DEVICE(#n)=value
+      this.p++; const v = this.operands();
+      if (this.u8() !== 0x73 || this.u8() !== 0x8f || this.u8() !== 0x20 || v.length !== 1) throw new BcUnknown(0x5a, this.p - 1, '$DEVICE store');
+      return '$DEVICE(#' + fno + ')=' + v[0];
+    }
     if (t === 0x78 && ops2.length === 1) {
       const fl = this.u8();
       const a = bcBcdLine(this.u8(), this.u8()), z = bcBcdLine(this.u8(), this.u8()); const blo = this.u8(), bhi = this.u8();
